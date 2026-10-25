@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="attendance_photos" path="photos/" />
+    <files-path name="restored_photos" path="restore-generations/" />
+    <files-path name="activity_photos" path="activity-photos/" />
+    <cache-path name="share_exports" path="exports/" />
+</paths>
