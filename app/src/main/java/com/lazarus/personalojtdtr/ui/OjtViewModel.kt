@@ -77,7 +77,7 @@ class OjtViewModel(private val repository: OjtRepository, private val recorder: 
     }
     fun captureStarted(): Boolean {
         val current = _capture.value ?: return false
-        if (current.working) return false
+        if (current.working || current.draft.capturedAt != null) return false
         _capture.value = current.copy(working = true, error = null)
         return true
     }
@@ -106,7 +106,7 @@ class OjtViewModel(private val repository: OjtRepository, private val recorder: 
         viewModelScope.launch {
             try { _capture.value = CaptureUi(recorder.retake(current.draft)) }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { _capture.value = current.copy(error = e.message) }
+            catch (e: Exception) { _capture.value = current.copy(working = false, error = e.message) }
         }
     }
     fun cancelCapture() {

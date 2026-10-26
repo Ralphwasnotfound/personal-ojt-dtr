@@ -1,4 +1,18 @@
-# My OJT Companion — P4
+# My OJT Companion
+
+Current checkpoint: **P5–P6.5 complete** — offline widget, modern Material 3 UI, CameraX capture/review, persistent System/Light/Dark themes, personalized BSIT Dashboard/launcher branding, and consistent action iconography. The user reports successful visual testing on Samsung Galaxy A06; earlier phase notes below describe their original implementation-session validation limits.
+
+Phase guides: [Camera](docs/P6.2_CAMERA_UI_REDESIGN.md) · [Themes](docs/P6.3_THEME_SUPPORT.md) · [Dashboard branding](docs/P6.4_DASHBOARD_BRANDING.md) · [Iconography](docs/P6.5_ICONOGRAPHY_POLISH.md).
+
+The P7 checkpoint reruns `./gradlew :app:assembleDebug :app:testDebugUnitTest` before committing. Local data, private photos, backup archives, signing material and generated APK/build outputs are excluded from Git.
+
+## Historical phase notes
+
+P6.1 adds a prominent maroon progress hero, refined native surfaces/status chips, compact evidence rows, a floating journal action and a clearer navigation indicator. See [P6.1_MODERN_UI_REFINEMENT.md](docs/P6.1_MODERN_UI_REFINEMENT.md) for the file map, reduced-motion behavior, build limitations and Samsung A06 validation checklist. Business/data logic and P5.1 widget design remain unchanged.
+
+P6 redesigns the app with a centralized maroon Material 3 theme, borderless sections, attendance timelines and journal rows. See [P6_APP_UI_REDESIGN.md](docs/P6_APP_UI_REDESIGN.md) for the file map, accessibility choices, validation limits and Samsung A06 checklist. P5.1 widget UI and all business/data logic are preserved. A normal local build and device validation are still required for P6.
+
+P5 adds an offline home-screen widget with shared Dashboard progress calculations, dated attendance status, responsive layouts, and Attendance/Activities shortcuts. See [P5_HOME_SCREEN_WIDGET.md](docs/P5_HOME_SCREEN_WIDGET.md) for architecture, refresh behavior, validation limitations, and the Samsung A06 checklist. P5 still needs a normal local Gradle build and launcher/device validation; the implementation-session sandbox prevents a full Gradle build. The P4 implementation and validation notes below are retained as historical context.
 
 P1–P3 are retained, with P4 activity documentation and UI improvements implemented. App version is **0.4.0** (`com.lazarus.personalojtdtr`).
 

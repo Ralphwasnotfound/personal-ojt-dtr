@@ -50,14 +50,16 @@ object AttendanceImageProcessor {
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD) }
             val padding = minOf(canvas.width, canvas.height) * 0.035f
             val lines = AttendanceTimestamp.lines(event)
-            paint.textSize = minOf(canvas.width * 0.042f, canvas.height * 0.05f)
+            paint.textSize = minOf(canvas.width * 0.032f, canvas.height * 0.04f)
             val widest = lines.maxOf { paint.measureText(it) }
-            if (widest > canvas.width - 2 * padding) paint.textSize *= (canvas.width - 2 * padding) / widest
+            if (widest > canvas.width - 4 * padding) paint.textSize *= (canvas.width - 4 * padding) / widest
             val lineHeight = paint.fontSpacing * 1.2f
             val height = lines.size * lineHeight + 2 * padding
-            val top = canvas.height - height
-            canvas.drawRect(0f, top, canvas.width.toFloat(), canvas.height.toFloat(), Paint().apply { color = Color.argb(210, 0, 0, 0) })
-            lines.forEachIndexed { index, line -> canvas.drawText(line, padding, top + padding - paint.fontMetrics.ascent + index * lineHeight, paint) }
+            val top = canvas.height - height - padding
+            val width = lines.maxOf { paint.measureText(it) } + 2 * padding
+            canvas.drawRoundRect(padding, top, padding + width, canvas.height - padding, padding * 0.4f, padding * 0.4f,
+                Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(185, 0, 0, 0) })
+            lines.forEachIndexed { index, line -> canvas.drawText(line, 2 * padding, top + padding - paint.fontMetrics.ascent + index * lineHeight, paint) }
             FileOutputStream(output).use {
                 check(canvasImage.compress(Bitmap.CompressFormat.JPEG, 88, it)) { "JPEG encoding failed." }
                 it.fd.sync()

@@ -1,5 +1,7 @@
 <resources>
+    <color name="app_window_background">#F8F6F4</color>
     <style name="Theme.OjtCompanion" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/app_window_background</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>

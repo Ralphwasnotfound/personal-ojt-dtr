@@ -10,6 +10,7 @@ import com.lazarus.personalojtdtr.domain.model.*
 import com.lazarus.personalojtdtr.domain.usecase.AttendanceCalculations
 import com.lazarus.personalojtdtr.domain.usecase.DailyAttendance
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -22,6 +23,14 @@ class OjtRepository(private val db: OjtDatabase, private val clock: Clock = Cloc
     private val operationMutex = Mutex()
     suspend fun <T> exclusive(block: suspend () -> T): T = operationMutex.withLock { block() }
     private val dao = db.dao()
+    // A single transaction prevents mixed pre/post-restore inputs. Invalidation covers every
+    // writer, including confirmed photos and REPLACE restore, without UI-specific hooks.
+    suspend fun widgetInputs(): WidgetInputs = db.withTransaction {
+        WidgetInputs(dao.profile()?.requiredHours ?: 0, legacySessions(), recordedEvents(), recordedResolutions())
+    }
+    val widgetChanges get() = db.invalidationTracker.createFlow(
+        "personal_profile", "attendance_sessions", "attendance_events", "session_resolutions", "restore_marker"
+    ).map { widgetInputs() }.distinctUntilChanged()
     val resolutions = dao.observeResolutions().map { rows -> rows.map { it.toModel() } }
     suspend fun recordedResolutions() = dao.resolutions().map { it.toModel() }
     suspend fun resolve(date: LocalDate, session: OjtSession, kind: ResolutionKind) = exclusive { db.withTransaction {

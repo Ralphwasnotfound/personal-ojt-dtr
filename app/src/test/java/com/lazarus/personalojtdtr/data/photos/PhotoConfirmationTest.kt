@@ -34,6 +34,32 @@ class PhotoConfirmationTest {
         assertEquals("stamp:${e.id}:${e.occurredAt}", files.resolve(e.timestampedPhotoPath).readText())
         assertFalse(files.draft(e.id).exists())
     }
+    @Test fun `retaking draft replaces only temporary bytes and confirmation inserts once`() = runBlocking {
+        val files = store()
+        val e = draft(files)
+        val replacement = "retaken-photo".toByteArray()
+        // Recorder retake removes this draft JPEG, then CameraX writes the next capture to it.
+        assertTrue(files.draft(e.id).delete())
+        files.draft(e.id).writeBytes(replacement)
+        assertFalse(files.resolve(e.originalPhotoPath).exists())
+        assertFalse(files.resolve(e.timestampedPhotoPath).exists())
+        var inserts = 0
+        PhotoConfirmation(files).save(e) { inserts++ }
+        assertEquals(1, inserts)
+        assertArrayEquals(replacement, files.resolve(e.originalPhotoPath).readBytes())
+    }
+    @Test fun `failed confirmation can retry without an extra committed event`() = runBlocking {
+        val files = store()
+        val e = draft(files)
+        var committed = 0
+        try { PhotoConfirmation(files).save(e) { error("storage unavailable") }; fail("Expected rejection") }
+        catch (_: IllegalStateException) { }
+        assertEquals(0, committed)
+        assertTrue(files.draft(e.id).isFile)
+        PhotoConfirmation(files).save(e) { committed++ }
+        assertEquals(1, committed)
+        assertArrayEquals(original, files.resolve(e.originalPhotoPath).readBytes())
+    }
     @Test fun `render failure cleans partial final files and retains draft for retake`() = runBlocking {
         val files = store { _, output, _ -> output.writeText("partial"); error("encoder failed") }
         val e = draft(files)

@@ -33,14 +33,26 @@ gson = jar("com.google.code.gson", "gson", "2.11.0")
 stdlib = jar("org.jetbrains.kotlin", "kotlin-stdlib", "2.2.21")
 junit = [jar("junit", "junit", "4.13.2"), jar("org.hamcrest", "hamcrest-core", "1.3")]
 coroutines = jar("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.10.2")
+# DataStore is already provided by Glance; theme persistence tests exercise its real file store.
+sdk = Path(os.environ.get("ANDROID_HOME", str(Path.home() / "Android/Sdk")))
+preference_classpath = [str(sdk / "platforms/android-36/android.jar")]
+for artifact in (CACHE / "androidx.datastore").iterdir():
+    for cached in (artifact / "1.0.0").glob("*/*"):
+        if cached.suffix == ".jar":
+            preference_classpath.append(str(cached))
+        elif cached.suffix == ".aar":
+            with zipfile.ZipFile(cached) as archive:
+                target = OUT / ("androidx.datastore-" + artifact.name + ".jar")
+                target.write_bytes(archive.read("classes.jar"))
+                preference_classpath.append(str(target))
 base = ROOT / "app/src/main/java/com/lazarus/personalojtdtr"
-sources = [base / "data/backup" / (name + ".kt") for name in ["BackupRecords", "BackupJson", "BackupArchive", "AtomicRestore"]] + list((base / "domain").rglob("*.kt")) + [base / "data/photos/LocalAttendancePhotos.kt", base / "util/AttendanceTimestamp.kt", base / "data/photos/ActivityPhotoStore.kt"]
+sources = [base / "data/backup" / (name + ".kt") for name in ["BackupRecords", "BackupJson", "BackupArchive", "AtomicRestore"]] + list((base / "domain").rglob("*.kt")) + [base / "data/photos/LocalAttendancePhotos.kt", base / "util/AttendanceTimestamp.kt", base / "util/Display.kt", base / "data/photos/ActivityPhotoStore.kt", base / "data/preferences/ThemePreferences.kt"]
 tests = list((ROOT / "app/src/test").rglob("*.kt"))
 command = ["java", "-Djava.io.tmpdir=" + str(OUT / "tmp"), "-Xmx2g", "-cp", ":".join(compiler), "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler", "-no-stdlib", "-no-reflect", "-jvm-target", "17"]
 test_jar = str(OUT / "tests.jar")
-checked(command + ["-classpath", ":".join([stdlib, coroutines, gson] + junit), "-d", test_jar] + list(map(str, sources + tests)))
+checked(command + ["-classpath", ":".join([stdlib, coroutines, gson] + junit + preference_classpath), "-d", test_jar] + list(map(str, sources + tests)))
 classes = [".".join(p.relative_to(ROOT / "app/src/test/java").with_suffix("").parts) for p in tests]
-checked(["java", "-Djava.io.tmpdir=" + str(OUT / "tmp"), "-cp", ":".join([test_jar, stdlib, coroutines, gson] + junit), "org.junit.runner.JUnitCore"] + classes)
+checked(["java", "-Djava.io.tmpdir=" + str(OUT / "tmp"), "-cp", ":".join([test_jar, stdlib, coroutines, gson] + junit + preference_classpath), "org.junit.runner.JUnitCore"] + classes)
 
 if "--tests-only" in sys.argv:
     raise SystemExit(0)
@@ -66,6 +78,29 @@ for group in CACHE.iterdir():
                         classpath.append(str(target))
 sdk = Path(os.environ.get("ANDROID_HOME", str(Path.home() / "Android/Sdk")))
 classpath.append(str(sdk / "platforms/android-36/android.jar"))
+# Generate a real application R class for sources that reference widget resources.
+# This validates our resources, not the merged dependency manifest/resources or APK.
+resources = OUT / "resource-check"
+resources.mkdir(exist_ok=True)
+resource_java = resources / "java"
+resource_classes = resources / "classes"
+resource_java.mkdir(exist_ok=True)
+resource_classes.mkdir(exist_ok=True)
+aapt = str(sdk / "build-tools/36.0.0/aapt2")
+compiled = resources / "resources.zip"
+checked([aapt, "compile", "--dir", str(ROOT / "app/src/main/res"), "-o", str(compiled)])
+manifest = (ROOT / "app/src/main/AndroidManifest.xml").read_text().replace("${applicationId}", "com.lazarus.personalojtdtr")
+manifest = manifest.replace("<manifest ", '<manifest package="com.lazarus.personalojtdtr" ', 1)
+manifest_file = resources / "AndroidManifest.xml"
+manifest_file.write_text(manifest)
+checked([aapt, "link", "-I", str(sdk / "platforms/android-36/android.jar"), "--manifest", str(manifest_file),
+         "--java", str(resource_java), "--min-sdk-version", "26", "--target-sdk-version", "36",
+         "-o", str(resources / "resources.apk"), str(compiled)])
+checked(["javac", "--release", "17", "-d", str(resource_classes)] + list(map(str, resource_java.rglob("*.java"))))
+resource_jar = resources / "resources.jar"
+checked(["jar", "--create", "--file", str(resource_jar), "-C", str(resource_classes), "."])
+classpath.append(str(resource_jar))
+print("Application resource compilation/linking and R generation passed (not merged APK validation).")
 plugin = jar("org.jetbrains.kotlin", "kotlin-compose-compiler-plugin-embeddable", "2.2.21")
 checked(command + ["-Xplugin=" + plugin, "-classpath", ":".join(classpath), "-d", str(OUT / "sources.jar")] + list(map(str, base.rglob("*.kt"))))
 print("Supplemental Kotlin/Compose source compilation passed (no KSP, resources, or APK validation).")

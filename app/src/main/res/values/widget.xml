@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_description">Offline OJT progress and attendance shortcuts</string>
+    <color name="widget_surface">#F8F6F4</color>
+    <color name="widget_button_surface">#F8F6F4</color>
+    <color name="widget_text">#202020</color>
+    <color name="widget_muted">#757575</color>
+    <color name="widget_accent">#8B1717</color>
+    <color name="widget_track">#E7DEDB</color>
+</resources>

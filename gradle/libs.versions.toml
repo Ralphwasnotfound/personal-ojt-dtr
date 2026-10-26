@@ -11,11 +11,14 @@ room = "2.8.3"
 coroutines = "1.10.2"
 camera = "1.5.3"
 glance = "1.1.1"
+work = "2.10.1"
+datastore = "1.0.0"
 junit = "4.13.2"
 exif = "1.4.2"
 gson = "2.11.0"
 
 [libraries]
+datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 exif = { module = "androidx.exifinterface:exifinterface", version.ref = "exif" }
 androidx-core = { module = "androidx.core:core-ktx", version.ref = "core" }
@@ -36,6 +39,7 @@ camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "cam
 camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camera" }
 camera-view = { module = "androidx.camera:camera-view", version.ref = "camera" }
 glance = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
+work = { module = "androidx.work:work-runtime", version.ref = "work" }
 junit = { module = "junit:junit", version.ref = "junit" }
 
 [plugins]

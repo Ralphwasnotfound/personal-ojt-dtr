@@ -107,6 +107,12 @@ class DailyAttendanceTest {
     @Test fun `orphan afternoon events never award hours`() {
         assertEquals(Duration.ZERO to Duration.ZERO, DailyAttendance.daily(date, complete.drop(2)))
     }
+    @Test fun `review delay preserves separate capture time and confirmation evidence time`() {
+        val confirmed = event(0, "08:02:30").copy(capturedAt = date.atTime(8, 0).atZone(AttendanceCalculations.manila).toInstant())
+        DailyAttendance.validate(confirmed, emptyList(), emptyList())
+        assertEquals("8:02:30 AM | PH Time (UTC+08:00)", AttendanceTimestamp.lines(confirmed)[2])
+        assertEquals(120 + 30, Duration.between(confirmed.capturedAt, confirmed.occurredAt).seconds.toInt())
+    }
     @Test fun `overlay local day changes independently of UTC day`() {
         assertEquals("October 24, 2026", AttendanceTimestamp.lines(event(0, "00:01"))[1])
     }

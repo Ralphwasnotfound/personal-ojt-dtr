@@ -34,10 +34,17 @@ class AttendanceRecorder(
 
     suspend fun newDraft(date: LocalDate, type: AttendanceEventType): CaptureDraft = withContext(Dispatchers.IO) {
         mutex.withLock {
-            repository.exclusive { initialize() }
-            require(date == now().atZone(AttendanceCalculations.manila).toLocalDate()) { "The date changed. Reopen attendance." }
-            val id = UUID.randomUUID().toString()
-            CaptureDraft(id, date, type, photos.createDraft(id))
+            repository.exclusive {
+                initialize()
+                val time = now()
+                require(date == time.atZone(AttendanceCalculations.manila).toLocalDate()) { "The date changed. Reopen attendance." }
+                val id = UUID.randomUUID().toString()
+                val paths = photos.paths(id, date, type)
+                // Reuse the authoritative validator before opening the camera; confirmation validates again.
+                DailyAttendance.validate(AttendanceEvent(id, date, type, time, time, paths.first, paths.second),
+                    repository.recordedEvents(), repository.legacySessions(), repository.recordedResolutions())
+                CaptureDraft(id, date, type, photos.createDraft(id))
+            }
         }
     }
     suspend fun captured(draft: CaptureDraft): CaptureDraft = withContext(Dispatchers.IO) {

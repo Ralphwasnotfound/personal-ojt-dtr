@@ -24,6 +24,7 @@ android {
 kotlin { jvmToolchain(17) }
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 dependencies {
+    implementation(libs.datastore.preferences)
     implementation(libs.gson)
     implementation(libs.exif)
     implementation(libs.androidx.core)
@@ -44,5 +45,6 @@ dependencies {
     implementation(libs.camera.lifecycle)
     implementation(libs.camera.view)
     implementation(libs.glance)
+    implementation(libs.work)
     testImplementation(libs.junit)
 }

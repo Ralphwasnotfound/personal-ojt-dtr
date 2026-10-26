@@ -12,9 +12,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import com.lazarus.personalojtdtr.ui.theme.DialogSystemBars
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import com.lazarus.personalojtdtr.ui.theme.AppSpacing
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,21 +36,25 @@ import com.lazarus.personalojtdtr.util.*
 import kotlinx.coroutines.launch
 import java.time.*
 
-@Composable fun ActivityCard(activity: DailyActivity, photos: ActivityPhotoStore, onClick: () -> Unit, compact: Boolean = false) {
-    OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+@Composable fun ActivityListRow(activity: DailyActivity, photos: ActivityPhotoStore, onClick: () -> Unit, compact: Boolean = false) {
+    Column {
+        Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).clickable(onClick = onClick).heightIn(min = 96.dp).padding(horizontal = AppSpacing.Micro, vertical = AppSpacing.Compact),
+            horizontalArrangement = Arrangement.spacedBy(AppSpacing.Compact), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.Micro)) {
+                Text(ActivityRules.dateLabel(activity.date) + activity.time?.let { " · ${ActivityRules.timeLabel(it)}" }.orEmpty(),
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(activity.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(activity.description, maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!compact && activity.photoPaths.isNotEmpty()) Text("${activity.photoPaths.size} ${if (activity.photoPaths.size == 1) "photo" else "photos"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (activity.photoPaths.isNotEmpty()) {
                 val file = remember(activity.photoPaths.first()) { runCatching { photos.thumbnailFor(activity.photoPaths.first()) }.getOrNull() }
-                LocalPhoto(file, "First photo for ${activity.title}", Modifier.size(if (compact) 64.dp else 80.dp), maxEdge = 320)
+                LocalPhoto(file, "First photo for ${activity.title}", Modifier.size(64.dp).clip(MaterialTheme.shapes.medium), maxEdge = 320)
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(activity.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(ActivityRules.dateLabel(activity.date) + activity.time?.let { " • ${ActivityRules.timeLabel(it)}" }.orEmpty(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                if (!compact) Text(activity.description, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-                Text("${activity.photoPaths.size} ${if (activity.photoPaths.size == 1) "photo" else "photos"}", style = MaterialTheme.typography.labelSmall)
-            }
-            AppIcon(AppSymbol.RIGHT, "Open activity")
+            AppIcon(AppSymbol.RIGHT, modifier = Modifier.size(18.dp))
         }
+        HorizontalDivider()
     }
 }
 
@@ -66,44 +76,53 @@ import java.time.*
             catch (_: Exception) { shareError = "A photo may be missing/unreadable, or no compatible sharing app is available. The activity is still saved." }
         }
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item {
-            Text("Activity journal", style = MaterialTheme.typography.headlineMedium)
-            Text("Your work, learning and photo documentation.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    var addActionHeight by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    val actionInset = with(density) { addActionHeight.toDp() } + AppSpacing.Page
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = AppSpacing.Page, end = AppSpacing.Page,
+            top = AppSpacing.Page, bottom = maxOf(104.dp, actionInset)), verticalArrangement = Arrangement.spacedBy(AppSpacing.Related)) {
+            item {
+                PageHeader("Activity journal", "Your work, learning and documentation.")
+            }
+            if (activities.isEmpty()) item { EmptyState("Start your OJT journal", "Use Add activity to document your work, learning and up to five optional photos, including past days.") }
+            activities.groupBy { it.date }.forEach { (date, rows) ->
+                item(key = "date-$date") { Column(Modifier.padding(top = AppSpacing.Section, bottom = AppSpacing.Related)) { SectionHeading(ActivityRules.dateLabel(date)) } }
+                rows.forEach { activity -> item(key = "activity-${activity.id}") { ActivityListRow(activity, model.photos, { model.detail(activity.id) }) } }
+            }
         }
-        item { Button(onClick = { model.edit() }, enabled = !busy && !journalBusy) { AppIcon(AppSymbol.ADD); Spacer(Modifier.width(8.dp)); Text("Add activity") } }
-        if (activities.isEmpty()) item { InfoCard("Start your OJT journal") {
-            AppIcon(AppSymbol.ACTIVITIES)
-            Text("Record what you worked on, what you learned, and up to five optional photos. You can document a past day too.")
-        } }
-        activities.groupBy { it.date }.forEach { (date, rows) ->
-            item(key = "date-$date") { Text(ActivityRules.dateLabel(date), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
-            rows.forEach { activity -> item(key = "activity-${activity.id}") { ActivityCard(activity, model.photos, { model.detail(activity.id) }) } }
+        Button(onClick = { model.edit() }, enabled = !busy && !journalBusy,
+            shape = MaterialTheme.shapes.extraLarge,
+            modifier = Modifier.align(Alignment.BottomEnd).onSizeChanged { addActionHeight = it.height }.padding(AppSpacing.Page)
+                .shadow(if (busy || journalBusy) 0.dp else 3.dp, MaterialTheme.shapes.extraLarge).heightIn(min = 56.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp)) {
+            ActionLabel(AppSymbol.ADD, "Add activity")
         }
     }
-    if (selected != null && editor == null) Dialog(onDismissRequest = { model.detail(null) }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize()) {
-            LazyColumn(Modifier.fillMaxSize().safeDrawingPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    if (selected != null && editor == null) Dialog(onDismissRequest = { model.detail(null) }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        DialogSystemBars(edgeToEdge = true)
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            LazyColumn(Modifier.fillMaxSize().safeDrawingPadding(), contentPadding = PaddingValues(AppSpacing.Page), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 item { Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { model.detail(null) }) { AppIcon(AppSymbol.BACK, "Back to activities") }
+                    ActionIconButton(AppSymbol.BACK, "Back to activities", onClick = { model.detail(null) })
                     Text("Activity details", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                    IconButton(onClick = { model.edit(selected) }, enabled = !journalBusy) { AppIcon(AppSymbol.EDIT, "Edit activity") }
-                    IconButton(onClick = { deleteRequest = selected }, enabled = !journalBusy) { AppIcon(AppSymbol.DELETE, "Delete activity") }
+                    ActionIconButton(AppSymbol.EDIT, "Edit activity", onClick = { model.edit(selected) }, enabled = !journalBusy)
+                    ActionIconButton(AppSymbol.DELETE, "Delete activity", onClick = { deleteRequest = selected }, enabled = !journalBusy, destructive = true)
                 } }
                 item { Text(selected.title, style = MaterialTheme.typography.headlineMedium)
-                    Text(ActivityRules.dateLabel(selected.date) + selected.time?.let { " • ${ActivityRules.timeLabel(it)} PH Time" }.orEmpty(), color = MaterialTheme.colorScheme.primary) }
+                    Text(ActivityRules.dateLabel(selected.date) + selected.time?.let { " • ${ActivityRules.timeLabel(it)} PH Time" }.orEmpty(), color = MaterialTheme.colorScheme.onPrimaryContainer) }
                 item { Text(selected.description, style = MaterialTheme.typography.bodyLarge) }
                 item { Text("Documentation • ${selected.photoPaths.size} photos", style = MaterialTheme.typography.titleMedium) }
                 if (selected.photoPaths.isEmpty()) item { Text("No photos attached. Photos are optional.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 selected.photoPaths.forEachIndexed { index, path -> item(key = "photo-$index-$path") {
                     val file = remember(path) { runCatching { model.photos.thumbnailFor(path) }.getOrNull() }
-                    Box(Modifier.fillMaxWidth().clickable { viewer = selected.photoPaths to index }) { LocalPhoto(file, "Open activity photo ${index + 1}", Modifier.fillMaxWidth().height(200.dp), maxEdge = 640) }
-                    TextButton(onClick = { viewer = selected.photoPaths to index }) { Text("View photo ${index + 1}") }
+                    Box(Modifier.fillMaxWidth().clickable { viewer = selected.photoPaths to index }) { LocalPhoto(file, "Open activity photo ${index + 1}", Modifier.fillMaxWidth().height(200.dp).clip(MaterialTheme.shapes.medium), maxEdge = 640) }
+                    QuietButton(onClick = { viewer = selected.photoPaths to index }) { ActionLabel(AppSymbol.PHOTO, "View photo ${index + 1}", compact = true) }
                 } }
-                item { InfoCard("Share documentation") {
+                item { Section("Share documentation", AppSymbol.SHARE) {
                     Text("Choose the app and destination yourself. Some apps may omit accompanying text.")
-                    OutlinedButton(onClick = { share(selected, emptyList()) }) { AppIcon(AppSymbol.SHARE); Spacer(Modifier.width(8.dp)); Text("Share title & description") }
-                    if (selected.photoPaths.isNotEmpty()) OutlinedButton(onClick = { share(selected, selected.photoPaths) }) { Text("Share photos with text") }
+                    SecondaryButton(onClick = { share(selected, emptyList()) }) { ActionLabel(AppSymbol.SHARE, "Share title & description") }
+                    if (selected.photoPaths.isNotEmpty()) SecondaryButton(onClick = { share(selected, selected.photoPaths) }) { ActionLabel(AppSymbol.SHARE, "Share photos with text", compact = true) }
                 } }
                 item { Text("Created ${selected.createdAt.manilaLabel()}\nUpdated ${selected.updatedAt.manilaLabel()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 if (journalBusy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
@@ -113,12 +132,12 @@ import java.time.*
     editor?.let { ActivityEditorScreen(it, journalBusy, model) }
     camera?.let { ActivityCameraScreen(it, model) }
     viewer?.let { (paths, index) -> ActivityPhotoViewer(paths, index, selected?.title ?: "Activity photos", model.photos, { viewer = null }, selected?.let { activity -> { path, text -> share(activity, listOf(path), text) } }) }
-    deleteRequest?.let { activity -> AlertDialog(onDismissRequest = { deleteRequest = null }, title = { Text("Delete activity?") },
+    deleteRequest?.let { activity -> AlertDialog(onDismissRequest = { deleteRequest = null }, icon = { AppIcon(AppSymbol.DELETE) }, title = { DialogSystemBars(); Text("Delete activity?") },
         text = { Text("Delete “${activity.title}” and its photo references? Other activities and attendance are preserved. This cannot be undone without a backup.") },
-        confirmButton = { TextButton(onClick = { model.delete(activity); deleteRequest = null }, enabled = !journalBusy) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
-        dismissButton = { TextButton(onClick = { deleteRequest = null }) { Text("Cancel") } }) }
-    operationError?.let { message -> AlertDialog(onDismissRequest = model::dismissError, title = { Text("Activity not deleted") }, text = { Text(message) }, confirmButton = { TextButton(onClick = model::dismissError) { Text("OK") } }) }
-    shareError?.let { message -> AlertDialog(onDismissRequest = { shareError = null }, title = { Text("Unable to share") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { shareError = null }) { Text("OK") } }) }
+        confirmButton = { DestructiveButton(onClick = { model.delete(activity); deleteRequest = null }, enabled = !journalBusy, text = "Delete") },
+        dismissButton = { QuietButton(onClick = { deleteRequest = null }) { ActionLabel(AppSymbol.CLOSE, "Cancel", compact = true) } }) }
+    operationError?.let { message -> AlertDialog(onDismissRequest = model::dismissError, title = { DialogSystemBars(); Text("Activity not deleted") }, text = { Text(message) }, confirmButton = { QuietButton(onClick = model::dismissError) { Text("OK") } }) }
+    shareError?.let { message -> AlertDialog(onDismissRequest = { shareError = null }, title = { DialogSystemBars(); Text("Unable to share") }, text = { Text(message) }, confirmButton = { QuietButton(onClick = { shareError = null }) { Text("OK") } }) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -132,64 +151,66 @@ import java.time.*
     val date = runCatching { LocalDate.parse(editor.date) }.getOrNull()
     val time = if (editor.time.matches(Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]"))) runCatching { LocalTime.parse(editor.time) }.getOrNull() else null
     val valid = runCatching { ActivityRules.validate(editor.title, editor.description, requireNotNull(date), editor.photos.map { it.path }); require(editor.time.isBlank() || time != null) }.isSuccess
-    Dialog(onDismissRequest = { if (!busy) discard = true }, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = !busy, dismissOnClickOutside = false)) {
-        Surface(Modifier.fillMaxSize()) {
+    Dialog(onDismissRequest = { if (!busy) discard = true }, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = !busy, dismissOnClickOutside = false, decorFitsSystemWindows = false)) {
+        DialogSystemBars(edgeToEdge = true)
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                 Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { discard = true }, enabled = !busy) { AppIcon(AppSymbol.CLOSE, "Cancel editing") }
+                    ActionIconButton(AppSymbol.CLOSE, "Cancel editing", onClick = { discard = true }, enabled = !busy)
                     Text(if (editor.expectedRevision == null) "New activity" else "Edit activity", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                    TextButton(onClick = model::save, enabled = !busy && valid) { Text(if (busy) "Working…" else "Save") }
+                    Button(onClick = model::save, enabled = !busy && valid) { ActionLabel(AppSymbol.SAVE, if (busy) "Working…" else "Save", compact = true) }
                 }
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    OutlinedTextField(editor.title, { model.fields(title = it.take(121)) }, label = { Text("Activity title *") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                        enabled = !busy, isError = editor.title.trim().length > 120, supportingText = { Text("${editor.title.trim().length}/120") }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next))
-                    OutlinedTextField(editor.description, { model.fields(description = it.take(10001)) }, label = { Text("What did you work on or learn? *") }, minLines = 5, modifier = Modifier.fillMaxWidth(),
-                        enabled = !busy, isError = editor.description.trim().length > 10000, supportingText = { Text("Detailed description • ${editor.description.trim().length}/10000") })
-                    OutlinedTextField(editor.date, { model.fields(date = it) }, label = { Text("Activity date * (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !busy,
-                        isError = date == null || date.year !in 1800..2400, supportingText = { Text("Asia/Manila • past dates allowed • 1800–2400") }, trailingIcon = { TextButton(onClick = { datePicker = true }, enabled = !busy) { Text("Choose") } })
-                    OutlinedTextField(editor.time, { model.fields(time = it) }, label = { Text("Time (optional, HH:mm)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !busy,
-                        isError = editor.time.isNotBlank() && time == null, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done), trailingIcon = { TextButton(onClick = { timePicker = true }, enabled = !busy) { Text("Choose") } })
-                    if (editor.time.isNotBlank()) TextButton(onClick = { model.fields(time = "") }, enabled = !busy) { Text("Clear optional time") }
-                    Text("Photos • ${editor.photos.size}/5", style = MaterialTheme.typography.titleMedium)
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(AppSpacing.Page), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    TextField(editor.title, { model.fields(title = it.take(121)) }, label = { Text("Activity title *") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy, isError = editor.title.trim().length > 120, supportingText = { Text("${editor.title.trim().length}/120") }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), colors = appTextFieldColors(), shape = MaterialTheme.shapes.medium)
+                    TextField(editor.description, { model.fields(description = it.take(10001)) }, label = { Text("What did you work on or learn? *") }, minLines = 5, modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy, isError = editor.description.trim().length > 10000, supportingText = { Text("Detailed description • ${editor.description.trim().length}/10000") }, colors = appTextFieldColors(), shape = MaterialTheme.shapes.medium)
+                    TextField(editor.date, { model.fields(date = it) }, label = { Text("Activity date * (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !busy,
+                        isError = date == null || date.year !in 1800..2400, supportingText = { Text("Asia/Manila • past dates allowed • 1800–2400") }, trailingIcon = { ActionIconButton(AppSymbol.CALENDAR, "Choose activity date", onClick = { datePicker = true }, enabled = !busy) }, colors = appTextFieldColors(), shape = MaterialTheme.shapes.medium)
+                    TextField(editor.time, { model.fields(time = it) }, label = { Text("Time (optional, HH:mm)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !busy,
+                        isError = editor.time.isNotBlank() && time == null, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done), trailingIcon = { ActionIconButton(AppSymbol.ATTENDANCE, "Choose optional activity time", onClick = { timePicker = true }, enabled = !busy) }, colors = appTextFieldColors(), shape = MaterialTheme.shapes.medium)
+                    if (editor.time.isNotBlank()) QuietButton(onClick = { model.fields(time = "") }, enabled = !busy) { ActionLabel(AppSymbol.CLOSE, "Clear optional time", compact = true) }
+                    HorizontalDivider()
+                    SectionHeading("Attachments", AppSymbol.PHOTO)
+                    StatusPill("${editor.photos.size} / 5 photos", AppSymbol.PHOTO)
                     Text("Optional JPEG, PNG or WebP, up to 20 MiB each. Journal dates do not have to match capture dates.", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = model::openCamera, enabled = !busy && editor.photos.size < 5) { AppIcon(AppSymbol.CAMERA); Spacer(Modifier.width(8.dp)); Text("Camera") }
-                        OutlinedButton(onClick = {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(AppSpacing.Related), verticalArrangement = Arrangement.spacedBy(AppSpacing.Related)) {
+                        SecondaryButton(onClick = model::openCamera, enabled = !busy && editor.photos.size < 5) { ActionLabel(AppSymbol.CAMERA, "Camera") }
+                        SecondaryButton(onClick = {
                             val request = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                             if (editor.photos.size == 4) chooseOne.launch(request) else chooseMany.launch(request)
-                        }, enabled = !busy && editor.photos.size < 5) { AppIcon(AppSymbol.PHOTO); Spacer(Modifier.width(8.dp)); Text("Choose photos") }
+                        }, enabled = !busy && editor.photos.size < 5) { ActionLabel(AppSymbol.PHOTO, "Choose photos") }
                     }
                     editor.photos.forEachIndexed { index, photo ->
-                        OutlinedCard(Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(12.dp)) {
+                        RefinedSurface {
+                            Column {
                                 val file = remember(photo.path) { runCatching { model.photos.thumbnailFor(photo.path) }.getOrNull() }
-                                Box(Modifier.fillMaxWidth().clickable { viewer = index }) { LocalPhoto(file, "Activity attachment ${index + 1}", Modifier.fillMaxWidth().height(150.dp), maxEdge = 400) }
+                                Box(Modifier.fillMaxWidth().clickable { viewer = index }) { LocalPhoto(file, "Activity attachment ${index + 1}", Modifier.fillMaxWidth().height(150.dp).clip(MaterialTheme.shapes.medium), maxEdge = 400) }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Text("Photo ${index + 1}", Modifier.weight(1f))
-                                    IconButton(onClick = { model.move(index, -1) }, enabled = !busy && index > 0) { AppIcon(AppSymbol.LEFT, "Move photo ${index + 1} earlier") }
-                                    IconButton(onClick = { model.move(index, 1) }, enabled = !busy && index < editor.photos.lastIndex) { AppIcon(AppSymbol.RIGHT, "Move photo ${index + 1} later") }
-                                    IconButton(onClick = { model.remove(index) }, enabled = !busy) { AppIcon(AppSymbol.DELETE, "Remove photo ${index + 1}") }
+                                    ActionIconButton(AppSymbol.LEFT, "Move photo ${index + 1} earlier", onClick = { model.move(index, -1) }, enabled = !busy && index > 0)
+                                    ActionIconButton(AppSymbol.RIGHT, "Move photo ${index + 1} later", onClick = { model.move(index, 1) }, enabled = !busy && index < editor.photos.lastIndex)
+                                    ActionIconButton(AppSymbol.DELETE, "Remove photo ${index + 1}", onClick = { model.remove(index) }, enabled = !busy, destructive = true)
                                 }
                             }
                         }
                     }
                     editor.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Button(onClick = model::save, enabled = !busy && valid, modifier = Modifier.fillMaxWidth()) { Text("Save activity") }
-                    TextButton(onClick = { discard = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Cancel editing") }
+                    QuietButton(onClick = { discard = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { ActionLabel(AppSymbol.CLOSE, "Cancel editing", compact = true) }
                 }
             }
         }
     }
     if (datePicker) {
         val state = rememberDatePickerState(initialSelectedDateMillis = (date ?: today()).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(), yearRange = 1800..2400)
-        DatePickerDialog(onDismissRequest = { datePicker = false }, confirmButton = { TextButton(onClick = { state.selectedDateMillis?.let { model.fields(date = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString()) }; datePicker = false }) { Text("Use date") } }, dismissButton = { TextButton(onClick = { datePicker = false }) { Text("Cancel") } }) { DatePicker(state) }
+        DatePickerDialog(onDismissRequest = { datePicker = false }, confirmButton = { QuietButton(onClick = { state.selectedDateMillis?.let { model.fields(date = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString()) }; datePicker = false }) { ActionLabel(AppSymbol.CHECK, "Use date", compact = true) } }, dismissButton = { QuietButton(onClick = { datePicker = false }) { ActionLabel(AppSymbol.CLOSE, "Cancel", compact = true) } }) { DialogSystemBars(); DatePicker(state) }
     }
     if (timePicker) {
         val state = rememberTimePickerState(time?.hour ?: 8, time?.minute ?: 0, is24Hour = false)
-        AlertDialog(onDismissRequest = { timePicker = false }, title = { Text("Optional activity time") }, text = { TimeInput(state) }, confirmButton = { TextButton(onClick = { model.fields(time = LocalTime.of(state.hour, state.minute).toString()); timePicker = false }) { Text("Use time") } }, dismissButton = { TextButton(onClick = { timePicker = false }) { Text("Cancel") } })
+        AlertDialog(onDismissRequest = { timePicker = false }, title = { DialogSystemBars(); Text("Optional activity time") }, text = { TimeInput(state) }, confirmButton = { QuietButton(onClick = { model.fields(time = LocalTime.of(state.hour, state.minute).toString()); timePicker = false }) { ActionLabel(AppSymbol.CHECK, "Use time", compact = true) } }, dismissButton = { QuietButton(onClick = { timePicker = false }) { ActionLabel(AppSymbol.CLOSE, "Cancel", compact = true) } })
     }
-    if (discard) AlertDialog(onDismissRequest = { discard = false }, title = { Text("Discard unsaved changes?") }, text = { Text("Your saved activity stays unchanged. New unsaved attachments will be removed.") },
-        confirmButton = { TextButton(onClick = { model.cancelEditor(); discard = false }) { Text("Discard changes") } }, dismissButton = { TextButton(onClick = { discard = false }) { Text("Keep editing") } })
+    if (discard) AlertDialog(onDismissRequest = { discard = false }, icon = { AppIcon(AppSymbol.WARNING) }, title = { DialogSystemBars(); Text("Discard unsaved changes?") }, text = { Text("Your saved activity stays unchanged. New unsaved attachments will be removed.") },
+        confirmButton = { DestructiveButton(onClick = { model.cancelEditor(); discard = false }, text = "Discard changes") }, dismissButton = { QuietButton(onClick = { discard = false }) { ActionLabel(AppSymbol.EDIT, "Keep editing", compact = true) } })
     viewer?.let { ActivityPhotoViewer(editor.photos.map { it.path }, it, editor.title.ifBlank { "Activity photos" }, model.photos, { viewer = null }) }
 }

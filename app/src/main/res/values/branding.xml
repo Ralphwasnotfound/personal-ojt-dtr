@@ -1,0 +1,9 @@
+<resources>
+    <color name="launcher_background">#F8F6F4</color>
+    <string name="dashboard_brand_label">MY OJT COMPANION</string>
+    <string name="dashboard_subtitle">Your OJT progress at a glance</string>
+    <string name="dashboard_welcome">Welcome!</string>
+    <string name="dashboard_profile_setup">Set up your profile</string>
+    <string name="dashboard_profile_shortcut">Profile</string>
+    <string name="bsit_logo_description">BSIT — Bachelor of Science in Information Technology logo</string>
+</resources>

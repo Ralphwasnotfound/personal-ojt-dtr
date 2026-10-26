@@ -90,7 +90,7 @@ class ActivityViewModel(private val journal: ActivityJournal, private val saved:
     }
     fun captureStarted(): Boolean {
         val c = _camera.value ?: return false
-        if (c.working) return false
+        if (c.working || c.photo != null) return false
         _camera.value = c.copy(working = true, error = null); return true
     }
     fun captured(id: String) {
@@ -101,14 +101,17 @@ class ActivityViewModel(private val journal: ActivityJournal, private val saved:
             catch (_: Exception) { _camera.value = c.copy(working = false, error = "Photo is unreadable. Retake or cancel.") }
         }
     }
-    fun captureFailed(id: String) { _camera.value?.takeIf { it.id == id }?.let { _camera.value = it.copy(working = false, error = "Capture failed. Retry or cancel.") } }
+    fun captureFailed(id: String, message: String = "Retry or cancel.") { _camera.value?.takeIf { it.id == id }?.let { _camera.value = it.copy(working = false, error = "Capture failed. $message") } }
     fun retake() {
         val c = _camera.value ?: return; val e = _editor.value ?: return
         if (c.working) return
         _camera.value = c.copy(working = true)
         viewModelScope.launch {
-            journal.removePending(e.draftId, ActivityAttachment(photos.relative(c.file), true))
-            _camera.value = c.copy(photo = null, working = false, error = null)
+            try {
+                journal.removePending(e.draftId, ActivityAttachment(photos.relative(c.file), true))
+                _camera.value = c.copy(photo = null, working = false, error = null)
+            } catch (error: CancellationException) { throw error }
+            catch (_: Exception) { _camera.value = c.copy(working = false, error = "Could not retake photo. Check storage and retry.") }
         }
     }
     fun usePhoto() {

@@ -4,10 +4,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import com.lazarus.personalojtdtr.ui.theme.DialogSystemBars
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.lazarus.personalojtdtr.ui.theme.AppSpacing
 import com.lazarus.personalojtdtr.data.photos.LocalAttendancePhotos
 import com.lazarus.personalojtdtr.domain.model.*
 import com.lazarus.personalojtdtr.domain.usecase.*
@@ -26,68 +28,86 @@ import java.time.LocalDate
     var resolutionRequest by remember { mutableStateOf<Triple<LocalDate, OjtSession, ResolutionKind>?>(null) }
     val unfinished = AttendanceRecovery.unfinishedBefore(date, state.events, state.resolutions)
     var preview by remember { mutableStateOf<AttendanceEvent?>(null) }
-    Page("Attendance", "$date • Asia/Manila • device clock") {
-        Text("Morning and afternoon are session labels. Record each event at its actual time; there is no noon cutoff.")
-        InfoCard("Today's completed hours") {
-            Text("Morning: ${morning.hoursLabel()}")
-            Text("Afternoon: ${afternoon.hoursLabel()}")
-            Text("Daily total: ${morning.plus(afternoon).hoursLabel()}")
-            Text("The gap between sessions is excluded. No extra lunch break is deducted.")
+    Page("Attendance", "$date · Asia/Manila · device clock") {
+        RefinedSurface {
+            SectionHeading("Today's completed hours", AppSymbol.COMPLETED)
+            Text(morning.plus(afternoon).hoursLabel(), style = MaterialTheme.typography.headlineMedium)
+            Text("Morning ${morning.hoursLabel()} · Afternoon ${afternoon.hoursLabel()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Actual completed intervals only. The lunch gap is excluded without an extra deduction.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         unfinished.forEach { start ->
-            InfoCard("Resolve ${start.date} • ${OjtSession.entries[start.type.code / 2].label}") {
-                Text("A previous-day session has no Time Out. Mark it incomplete/unverified to unblock attendance. It earns zero hours; recorded events and photos stay unchanged.")
+            HorizontalDivider()
+            Section("Recovery required · ${start.date}", AppSymbol.RESTORE) {
+                StatusPill("Action needed", AppSymbol.RESTORE, emphasized = true)
+                Text("${OjtSession.entries[start.type.code / 2].label} has no Time Out. Mark it incomplete/unverified to continue. It earns zero hours; the original events and photos stay unchanged.")
                 state.events.filter { it.date == start.date }.forEach { event ->
-                    Text("${event.type.label}: ${event.occurredAt.manilaLabel()}")
-                    LocalPhoto(remember(event.originalPhotoPath) { runCatching { photos.resolve(event.originalPhotoPath) }.getOrNull() }, event.type.label, Modifier.fillMaxWidth().height(120.dp))
-                    TextButton(onClick = { preview = event }) { Text("View recorded photos") }
+                    Text("${event.type.label}: ${event.occurredAt.manilaLabel()}", style = MaterialTheme.typography.bodyMedium)
+                    LocalPhoto(remember(event.originalPhotoPath) { runCatching { photos.resolve(event.originalPhotoPath) }.getOrNull() }, event.type.label, Modifier.fillMaxWidth().height(96.dp), maxEdge = 320)
+                    QuietButton(onClick = { preview = event }) { ActionLabel(AppSymbol.PHOTO, "View recorded photos", compact = true) }
                 }
-                Button(enabled = !busy, onClick = { resolutionRequest = Triple(start.date, OjtSession.entries[start.type.code / 2], ResolutionKind.INCOMPLETE) }) { Text("Mark incomplete / unverified") }
-            }
-        }
-        OjtSession.entries.forEach { session ->
-            val action = state.resolutions.firstOrNull { it.date == date && it.session == session }
-            if (action != null) InfoCard("${session.label}: ${action.kind.label}") { Text("Action recorded ${action.actedAt.manilaLabel()} • no additional credited hours") }
-            else if (state.events.none { it.date == date && it.type.code / 2 == session.code }) {
-                val previousResolved = session == OjtSession.MORNING || state.events.any { it.date == date && it.type == AttendanceEventType.MORNING_TIME_OUT } || state.resolutions.any { it.date == date && it.session == OjtSession.MORNING }
-                OutlinedButton(enabled = !busy && previousResolved, onClick = { resolutionRequest = Triple(date, session, ResolutionKind.SKIPPED) }) { Text("${session.label}: skip / not worked") }
+                QuietButton(enabled = !busy, onClick = { resolutionRequest = Triple(start.date, OjtSession.entries[start.type.code / 2], ResolutionKind.INCOMPLETE) }) { ActionLabel(AppSymbol.RESTORE, "Mark incomplete / unverified", compact = true) }
             }
         }
         if (legacy != null) {
             var breakText by rememberSaveable(legacy.id) { mutableStateOf(legacy.breakDuration.toMinutes().toString()) }
             val minutes = breakText.toLongOrNull()
-            InfoCard("Unfinished legacy P1 session") {
+            Section("Unfinished legacy P1 session", AppSymbol.HISTORY) {
                 Text("Time In: ${legacy.timeIn.manilaLabel()}. Close this original session before starting four-event attendance.")
-                OutlinedTextField(value = breakText, onValueChange = { breakText = it }, label = { Text("Actual legacy break (minutes)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                Button(onClick = { minutes?.let(onCloseLegacy) }, enabled = !busy && minutes != null && minutes in 0..1440) { Text("Close legacy P1 session") }
+                TextField(value = breakText, onValueChange = { breakText = it }, label = { Text("Actual legacy break (minutes)") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), colors = appTextFieldColors(), shape = MaterialTheme.shapes.medium)
+                Button(onClick = { minutes?.let(onCloseLegacy) }, enabled = !busy && minutes != null && minutes in 0..1440,
+                    modifier = Modifier.fillMaxWidth()) { ActionLabel(AppSymbol.TIME_OUT, "Close legacy P1 session", compact = true) }
             }
         }
-        AttendanceEventType.entries.forEach { type ->
-            val event = state.events.firstOrNull { it.date == date && it.type == type }
-            InfoCard(type.label) {
-                if (event == null) {
-                    val resolution = state.resolutions.firstOrNull { it.date == date && it.session.code == type.code / 2 }
-                    Text(resolution?.kind?.label ?: if (next == type) "Next event • not recorded" else "Not recorded")
-                    Button(onClick = { onCapture(date, type) }, enabled = !busy && next == type && !earlierOpen && legacy == null) { Text("Capture ${type.label}") }
-                } else {
-                    Text("Completed • ${event.occurredAt.manilaLabel()}")
-                    LocalPhoto(remember(event.timestampedPhotoPath) { runCatching { photos.resolve(event.timestampedPhotoPath) }.getOrNull() }, type.label, Modifier.fillMaxWidth().height(160.dp))
-                    Row {
-                        TextButton(onClick = { preview = event }) { Text("View photos") }
-                        TextButton(onClick = { onShare(event) }) { Text("Share photo") }
+        HorizontalDivider()
+        Column {
+            SectionHeading("Today's timeline", AppSymbol.ATTENDANCE)
+            Text("Record each event at its actual time. Morning and afternoon have no noon cutoff.", Modifier.padding(vertical = AppSpacing.Related), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            AttendanceEventType.entries.forEach { type ->
+                val event = state.events.firstOrNull { it.date == date && it.type == type }
+                val resolution = state.resolutions.firstOrNull { it.date == date && it.session.code == type.code / 2 }
+                val available = event == null && next == type && !earlierOpen && legacy == null
+                val status = when {
+                    event != null -> "Completed"
+                    resolution != null -> resolution.kind.label
+                    next == type && (earlierOpen || legacy != null) -> "Recovery required"
+                    available -> "Available · next event"
+                    else -> "Pending"
+                }
+                TimelineRow(type.label, event?.occurredAt?.manilaLabel().orEmpty(), status, event != null,
+                    available, last = type == AttendanceEventType.AFTERNOON_TIME_OUT,
+                    symbol = if (type.code % 2 == 0) AppSymbol.TIME_IN else AppSymbol.TIME_OUT) {
+                    if (event != null) {
+                        PhotoEvidence(remember(event.timestampedPhotoPath) { runCatching { photos.resolve(event.timestampedPhotoPath) }.getOrNull() }, type.label,
+                            onView = { preview = event }, onShare = { onShare(event) })
                     }
                 }
             }
+            if (next != null && legacy == null) Button(onClick = { onCapture(date, next) },
+                enabled = !busy && !earlierOpen, modifier = Modifier.fillMaxWidth().heightIn(min = AppSpacing.Touch)) {
+                ActionLabel(AppSymbol.CAMERA, "Capture ${next.label}")
+            }
+            if (next == null && state.events.count { it.date == date } == 4) Text("All four attendance events are complete.")
         }
-        if (next == null && state.events.count { it.date == date } == 4) Text("All four attendance events are complete.")
+        if (state.resolutions.any { it.date == date } || OjtSession.entries.any { session -> state.events.none { it.date == date && it.type.code / 2 == session.code } }) Section("Session exceptions", AppSymbol.WARNING) {
+            OjtSession.entries.forEach { session ->
+                val action = state.resolutions.firstOrNull { it.date == date && it.session == session }
+                if (action != null) {
+                    Text("${session.label}: ${action.kind.label}", style = MaterialTheme.typography.titleSmall)
+                    Text("Recorded ${action.actedAt.manilaLabel()} · no additional credited hours", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if (state.events.none { it.date == date && it.type.code / 2 == session.code }) {
+                    val previousResolved = session == OjtSession.MORNING || state.events.any { it.date == date && it.type == AttendanceEventType.MORNING_TIME_OUT } || state.resolutions.any { it.date == date && it.session == OjtSession.MORNING }
+                    QuietButton(enabled = !busy && previousResolved, onClick = { resolutionRequest = Triple(date, session, ResolutionKind.SKIPPED) }) { ActionLabel(AppSymbol.RESTORE, "${session.label}: skip / not worked", compact = true) }
+                }
+            }
+        }
     }
     preview?.let { event -> EventPhotosDialog(event, photos, { onShare(event) }, { preview = null }) }
 
     resolutionRequest?.let { (day, session, kind) ->
-        AlertDialog(onDismissRequest = { resolutionRequest = null }, title = { Text("${session.label}: ${kind.label}?") },
+        AlertDialog(onDismissRequest = { resolutionRequest = null }, title = { DialogSystemBars(); Text("${session.label}: ${kind.label}?") },
             text = { Text("$day\nThis records an explicit audit action at the current device time. It creates no attendance timestamp or photograph, preserves existing events, and awards no hours for this session. This action cannot be edited accidentally afterward.") },
-            confirmButton = { TextButton(enabled = !busy, onClick = { onResolve(day, session, kind); resolutionRequest = null }) { Text("Confirm ${kind.label}") } },
-            dismissButton = { TextButton(onClick = { resolutionRequest = null }) { Text("Cancel") } })
+            confirmButton = { QuietButton(enabled = !busy, onClick = { onResolve(day, session, kind); resolutionRequest = null }) { ActionLabel(AppSymbol.CHECK, "Confirm ${kind.label}", compact = true) } },
+            dismissButton = { QuietButton(onClick = { resolutionRequest = null }) { ActionLabel(AppSymbol.CLOSE, "Cancel", compact = true) } })
     }
 }
