@@ -68,7 +68,9 @@ class AttendanceRecorder(
             val event = AttendanceEvent(draft.id, draft.date, draft.type, time, captured, paths.first, paths.second)
             // Reject replays before touching any existing committed files.
             DailyAttendance.validate(event, repository.recordedEvents(), repository.legacySessions(), repository.recordedResolutions())
-            PhotoConfirmation(photos).save(event) { repository.confirmEvent(it) }
+            PhotoConfirmation(photos).save(event, committed = { saved ->
+                repository.recordedEvents().any { it == saved }
+            }) { repository.confirmEvent(it) }
         } }
     }
 }

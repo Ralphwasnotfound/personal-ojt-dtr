@@ -15,6 +15,9 @@ object ActivityRules {
         require(date.year in 1800..2400) { "Choose an activity date between 1800 and 2400." }
         require(photoPaths.size <= MAX_PHOTOS && photoPaths.distinct().size == photoPaths.size && photoPaths.none { it.isBlank() }) { "Attach up to five distinct photos." }
     }
+    // Restore must invalidate editors saved before the database replacement, including
+    // SavedStateHandle editors resurrected after process death before UI reset delivery.
+    fun revisionAfterRestore(previous: Long?): Long = if (previous == null) 0 else Math.addExact(previous, 1L)
     fun requireRevision(expected: Long?, current: Long?) {
         if (expected == null) require(current == null) { "This activity was already saved. Reopen it to edit." }
         else require(current == expected) { "This activity changed or was deleted. Reopen it before editing." }

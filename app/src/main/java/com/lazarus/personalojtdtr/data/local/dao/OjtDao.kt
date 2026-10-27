@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface OjtDao {
+    @Query("SELECT * FROM daily_activities WHERE date >= :start AND date <= :end ORDER BY date ASC, id ASC")
+    suspend fun journalActivities(start: java.time.LocalDate, end: java.time.LocalDate): List<DailyActivityEntity>
+
     @Query("SELECT * FROM session_resolutions ORDER BY actedAt ASC") fun observeResolutions(): Flow<List<SessionResolutionEntity>>
     @Query("SELECT * FROM session_resolutions ORDER BY actedAt ASC") suspend fun resolutions(): List<SessionResolutionEntity>
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertResolution(value: SessionResolutionEntity)

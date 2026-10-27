@@ -22,13 +22,15 @@ class RoomBackupStore(private val database: OjtDatabase) : RestoreTarget {
     }
     override suspend fun applied(generation: String): Boolean = dao.restoreMarker()?.generation == generation
     override suspend fun replace(records: BackupRecords, paths: Map<String, String>, generation: String) = database.withTransaction {
+        val revisions = dao.activities().associate { it.id to
+            com.lazarus.personalojtdtr.domain.usecase.ActivityRules.revisionAfterRestore(it.revision) }
         val sqlite = database.openHelper.writableDatabase
         // Fixed application SQL only. DDL and data replacement roll back together on any failure.
         (RecoverySchema.triggerNames + ActivitySchema.triggerNames).forEach { sqlite.execSQL("DROP TRIGGER IF EXISTS $it") }
         dao.clearEvents(); dao.clearResolutions(); dao.clearSessions(); dao.clearActivities(); dao.clearProfile()
         records.profile?.let { dao.saveProfile(PersonalProfileEntity(it.id, it.displayName, it.requiredHours, it.startDate?.let(LocalDate::ofEpochDay), it.defaultBreakSeconds)) }
         records.legacy.forEach { dao.insertSession(AttendanceSessionEntity(it.id, Instant.ofEpochMilli(it.timeIn), it.timeOut?.let(Instant::ofEpochMilli), it.breakSeconds, it.original?.let(paths::getValue), it.outPhoto?.let(paths::getValue), Instant.ofEpochMilli(it.createdAt), Instant.ofEpochMilli(it.updatedAt))) }
-        records.activities.forEach { dao.insertActivity(DailyActivityEntity(it.id, LocalDate.ofEpochDay(it.date), it.description, it.photos.map(paths::getValue), Instant.ofEpochMilli(it.createdAt), Instant.ofEpochMilli(it.updatedAt), it.title, it.timeMinutes, 0)) }
+        records.activities.forEach { dao.insertActivity(DailyActivityEntity(it.id, LocalDate.ofEpochDay(it.date), it.description, it.photos.map(paths::getValue), Instant.ofEpochMilli(it.createdAt), Instant.ofEpochMilli(it.updatedAt), it.title, it.timeMinutes, revisions[it.id] ?: 0)) }
         records.events.forEach { dao.insertEvent(AttendanceEventEntity(it.id, LocalDate.ofEpochDay(it.date), it.type, Instant.ofEpochMilli(it.at), Instant.ofEpochMilli(it.capturedAt), paths.getValue(it.original), paths.getValue(it.stamped), Instant.ofEpochMilli(it.createdAt))) }
         records.resolutions.forEach { dao.insertResolution(SessionResolutionEntity(it.id, LocalDate.ofEpochDay(it.date), it.session, it.kind, Instant.ofEpochMilli(it.actedAt))) }
         dao.saveRestoreMarker(RestoreMarkerEntity(generation = generation, appliedAt = Instant.now()))

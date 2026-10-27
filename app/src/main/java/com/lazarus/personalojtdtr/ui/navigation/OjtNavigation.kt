@@ -1,8 +1,6 @@
 package com.lazarus.personalojtdtr.ui.navigation
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -21,7 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import com.lazarus.personalojtdtr.ui.theme.AppSpacing
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.*
 import com.lazarus.personalojtdtr.ui.*
 import com.lazarus.personalojtdtr.ui.dashboard.DashboardScreen
@@ -29,10 +27,10 @@ import com.lazarus.personalojtdtr.ui.attendance.AttendanceScreen
 import com.lazarus.personalojtdtr.ui.activity.ActivitiesScreen
 import com.lazarus.personalojtdtr.ui.activity.ActivityViewModel
 import com.lazarus.personalojtdtr.ui.history.HistoryScreen
-import com.lazarus.personalojtdtr.ui.profile.ProfileScreen
+import com.lazarus.personalojtdtr.ui.profile.*
 import com.lazarus.personalojtdtr.WidgetNavigationRequest
 
-private val destinations = listOf("dashboard" to "Home", "attendance" to "Attend", "activities" to "Activities", "history" to "History", "profile" to "Profile")
+private val destinations = listOf("dashboard" to "Home", "attendance" to "Attendance", "activities" to "Activities", "history" to "History", "profile" to "Profile")
 @Composable fun OjtNavigation(model: OjtViewModel, activitiesModel: ActivityViewModel,
     appearance: com.lazarus.personalojtdtr.ui.theme.ThemeSettings,
     onThemeSelected: (com.lazarus.personalojtdtr.domain.model.ThemeMode) -> Unit,
@@ -55,11 +53,7 @@ private val destinations = listOf("dashboard" to "Home", "attendance" to "Attend
     LaunchedEffect(widgetNavigation, state.loaded, state.loadError, busy, journalBusy, restoreRevision) {
         if (widgetNavigation != null && state.loaded && state.loadError == null && !busy && !journalBusy) {
             if (widgetNavigation.destination.route == "activities") activitiesModel.detail(null)
-            nav.navigate(widgetNavigation.destination.route) {
-                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                launchSingleTop = true
-                restoreState = true
-            }
+            nav.selectTopLevel(widgetNavigation.destination.route)
             onWidgetNavigationConsumed()
         }
     }
@@ -69,23 +63,10 @@ private val destinations = listOf("dashboard" to "Home", "attendance" to "Attend
         message?.let { snackbar.showSnackbar(it); model.dismissMessage() }
     }
     Scaffold(containerColor = MaterialTheme.colorScheme.background, contentWindowInsets = WindowInsets.safeDrawing, snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
-        Surface(shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            color = MaterialTheme.colorScheme.surface, shadowElevation = 3.dp,
-            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-            destinations.forEach { (route, label) ->
-                NavigationBarItem(colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer, selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant), selected = entry?.destination?.route == route,
-                    enabled = state.loaded && state.loadError == null && !busy && !journalBusy,
-                    onClick = { nav.navigate(route) {
-                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                        launchSingleTop = true; restoreState = true
-                    } }, icon = { AppIcon(when (route) { "dashboard" -> AppSymbol.HOME; "attendance" -> AppSymbol.ATTENDANCE; "activities" -> AppSymbol.ACTIVITIES; "history" -> AppSymbol.HISTORY; else -> AppSymbol.PROFILE }, null) }, label = { Text(label) })
-            }
-        }
-        }
+        DashboardBottomBar(destinations,
+            selected = { route -> entry?.destination?.hierarchy?.any { it.route == route } == true },
+            enabled = state.loaded && state.loadError == null && !busy && !journalBusy,
+            onSelect = nav::selectTopLevel)
     }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             when {
@@ -95,16 +76,37 @@ private val destinations = listOf("dashboard" to "Home", "attendance" to "Attend
                 !state.loaded -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 else -> NavHost(nav, startDestination = "dashboard") {
                     composable("dashboard") { DashboardScreen(state, activitiesModel.photos,
-                        onProfile = { nav.navigate("profile") { launchSingleTop = true } },
-                        onAttendance = { nav.navigate("attendance") { launchSingleTop = true } },
-                        onActivities = { activitiesModel.detail(null); nav.navigate("activities") { launchSingleTop = true } },
-                        onActivity = { activitiesModel.detail(it); nav.navigate("activities") { launchSingleTop = true } }) }
+                        onProfile = { nav.selectTopLevel("profile") },
+                        onAttendance = { nav.selectTopLevel("attendance") },
+                        onActivities = { activitiesModel.detail(null); nav.selectTopLevel("activities") },
+                        onActivity = { activitiesModel.detail(it); nav.selectTopLevel("activities") }) }
                     composable("attendance") { AttendanceScreen(state, busy, model.photos, model::openCapture, { model.share(context, it) }, model::timeOut, model::resolve) }
                     composable("activities") { ActivitiesScreen(state.activities, busy, activitiesModel) }
-                    composable("history") { HistoryScreen(state, model.photos, onAttendance = { nav.navigate("attendance") { launchSingleTop = true } }) { model.share(context, it) } }
-                    composable("profile") { ProfileScreen(state.profile, busy, model::saveProfile,
-                        { exportDocument.launch("MyOJTCompanion-${today()}.zip") },
-                        { importDocument.launch(arrayOf("application/zip", "application/octet-stream", "application/x-zip-compressed")) }, appearance, onThemeSelected) }
+                    composable("history") { HistoryScreen(state, model.photos, onAttendance = { nav.selectTopLevel("attendance") }) { model.share(context, it) } }
+                    navigation(startDestination = "profile/main", route = "profile") {
+                        composable("profile/main") {
+                            ProfileScreen(state.profile,
+                                onEditProfile = { nav.navigate("profile/edit") },
+                                onSettings = { nav.navigate("profile/settings") })
+                        }
+                        composable("profile/edit") {
+                            EditProfileScreen(state.profile, busy, model::saveProfile, onBack = { nav.popBackStack() })
+                        }
+                        composable("profile/settings") {
+                            SettingsScreen(onAppearance = { nav.navigate("profile/settings/appearance") },
+                                onDataBackup = { nav.navigate("profile/settings/data-backup") },
+                                onBack = { nav.popBackStack() })
+                        }
+                        composable("profile/settings/appearance") {
+                            AppearanceSettingsScreen(appearance, onThemeSelected, onBack = { nav.popBackStack() })
+                        }
+                        composable("profile/settings/data-backup") {
+                            DataBackupSettingsScreen(busy,
+                                onExport = { exportDocument.launch("MyOJTCompanion-${today()}.zip") },
+                                onRestore = { importDocument.launch(arrayOf("application/zip", "application/octet-stream", "application/x-zip-compressed")) },
+                                onBack = { nav.popBackStack() })
+                        }
+                    }
                 }
             }
         }

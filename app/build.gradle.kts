@@ -5,10 +5,13 @@ plugins {
     alias(libs.plugins.ksp)
 }
 android {
+    useLibrary("android.test.runner")
+    useLibrary("android.test.base")
     namespace = "com.lazarus.personalojtdtr"
     compileSdk = 36
     buildToolsVersion = "36.0.0"
     defaultConfig {
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         applicationId = "com.lazarus.personalojtdtr"
         minSdk = 26
         targetSdk = 36

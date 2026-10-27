@@ -7,6 +7,17 @@ import org.junit.Test
 
 class ActivityRulesTest {
     private val day = LocalDate.of(2026, 10, 20)
+    @Test fun `restored activity rejects stale editor revisions including original revision zero`() {
+        for (previous in listOf(0L, 1L, 42L)) {
+            val restored = ActivityRules.revisionAfterRestore(previous)
+            try { ActivityRules.requireRevision(previous, restored); fail("Stale editor must reopen") }
+            catch (_: IllegalArgumentException) { }
+            ActivityRules.requireRevision(restored, restored)
+        }
+    }
+    @Test(expected = ArithmeticException::class) fun `restore revision exhaustion fails instead of reusing an old revision`() {
+        ActivityRules.revisionAfterRestore(Long.MAX_VALUE)
+    }
     @Test fun `past dates and five ordered optional photos are valid`() { ActivityRules.validate("Network setup", "Configured a switch", day, listOf("5", "4", "3", "2", "1")); ActivityRules.validate("Learning", "Studied", day, emptyList()) }
     @Test(expected = IllegalArgumentException::class) fun `blank title rejected`() { ActivityRules.validate("  ", "Description", day, emptyList()) }
     @Test(expected = IllegalArgumentException::class) fun `blank description rejected`() { ActivityRules.validate("Title", "  ", day, emptyList()) }

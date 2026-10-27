@@ -29,6 +29,9 @@ class OjtApplication : Application() {
     val widgetPublisher by lazy { OfflineWidgetPublisher(this) }
     val journal by lazy { ActivityJournal(this, repository) }
     val backup by lazy { OfflineBackupService(this, repository) }
-    val recorder by lazy { AttendanceRecorder(repository, LocalAttendancePhotos(filesDir, AttendanceImageProcessor::stamp)) }
+    val recorder by lazy { AttendanceRecorder(repository, LocalAttendancePhotos(filesDir, AttendanceImageProcessor::stamp) { directory ->
+        val fd = android.system.Os.open(directory.path, android.system.OsConstants.O_RDONLY, 0)
+        try { android.system.Os.fsync(fd) } finally { android.system.Os.close(fd) }
+    }) }
     val repository by lazy { OjtRepository(OjtDatabase.create(this)) }
 }

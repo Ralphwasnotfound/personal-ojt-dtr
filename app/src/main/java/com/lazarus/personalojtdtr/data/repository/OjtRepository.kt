@@ -28,6 +28,17 @@ class OjtRepository(private val db: OjtDatabase, private val clock: Clock = Cloc
     suspend fun widgetInputs(): WidgetInputs = db.withTransaction {
         WidgetInputs(dao.profile()?.requiredHours ?: 0, legacySessions(), recordedEvents(), recordedResolutions())
     }
+    suspend fun dtrReport(period: java.time.YearMonth) = db.withTransaction {
+        com.lazarus.personalojtdtr.domain.usecase.DtrReports.create(period, dao.profile()?.displayName.orEmpty(),
+            recordedEvents(), legacySessions(), recordedResolutions())
+    }
+    suspend fun journalReport(period: com.lazarus.personalojtdtr.domain.usecase.JournalPeriod) = db.withTransaction {
+        com.lazarus.personalojtdtr.domain.usecase.JournalReport.create(period, dao.profile()?.displayName.orEmpty(),
+            dao.journalActivities(period.start, period.end).map {
+                DailyActivity(it.id, it.date, it.description, it.photoPaths, it.title,
+                    it.timeMinutes?.let { minute -> java.time.LocalTime.ofSecondOfDay(minute * 60L) }, it.createdAt, it.updatedAt, it.revision)
+            })
+    }
     val widgetChanges get() = db.invalidationTracker.createFlow(
         "personal_profile", "attendance_sessions", "attendance_events", "session_resolutions", "restore_marker"
     ).map { widgetInputs() }.distinctUntilChanged()

@@ -1,10 +1,17 @@
 package com.lazarus.personalojtdtr.ui.activity
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.lazarus.personalojtdtr.OjtApplication
+import com.lazarus.personalojtdtr.data.report.JournalExportService
+import com.lazarus.personalojtdtr.ui.report.*
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
@@ -24,6 +31,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,28 +46,54 @@ import kotlinx.coroutines.launch
 import java.time.*
 
 @Composable fun ActivityListRow(activity: DailyActivity, photos: ActivityPhotoStore, onClick: () -> Unit, compact: Boolean = false) {
-    Column {
-        Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).clickable(onClick = onClick).heightIn(min = 96.dp).padding(horizontal = AppSpacing.Micro, vertical = AppSpacing.Compact),
-            horizontalArrangement = Arrangement.spacedBy(AppSpacing.Compact), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.Micro)) {
+    val colors = MaterialTheme.colorScheme
+    Surface(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp), color = colors.surface,
+        border = BorderStroke(0.5.dp, colors.outlineVariant), shadowElevation = 0.5.dp) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(ActivityRules.dateLabel(activity.date) + activity.time?.let { " · ${ActivityRules.timeLabel(it)}" }.orEmpty(),
-                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(activity.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(activity.description, maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (!compact && activity.photoPaths.isNotEmpty()) Text("${activity.photoPaths.size} ${if (activity.photoPaths.size == 1) "photo" else "photos"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = colors.primary)
+                if (activity.photoPaths.isNotEmpty()) {
+                    Surface(shape = RoundedCornerShape(50), color = colors.tertiaryContainer) {
+                        Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            AppIcon(AppSymbol.PHOTO, modifier = Modifier.size(15.dp))
+                            Text("${activity.photoPaths.size} ${if (activity.photoPaths.size == 1) "photo" else "photos"}", style = MaterialTheme.typography.labelMedium,
+                                color = colors.onTertiaryContainer)
+                        }
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(activity.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(activity.description, maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                }
+                AppIcon(AppSymbol.RIGHT, modifier = Modifier.size(18.dp))
             }
             if (activity.photoPaths.isNotEmpty()) {
-                val file = remember(activity.photoPaths.first()) { runCatching { photos.thumbnailFor(activity.photoPaths.first()) }.getOrNull() }
-                LocalPhoto(file, "First photo for ${activity.title}", Modifier.size(64.dp).clip(MaterialTheme.shapes.medium), maxEdge = 320)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    activity.photoPaths.take(3).forEachIndexed { index, path ->
+                        val file = remember(path) { runCatching { photos.thumbnailFor(path) }.getOrNull() }
+                        LocalPhoto(file, "Photo ${index + 1} for ${activity.title}", Modifier.size(40.dp)
+                            .clip(RoundedCornerShape(8.dp)), maxEdge = 240)
+                    }
+                    if (activity.photoPaths.size > 3) Text("+${activity.photoPaths.size - 3}",
+                        style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                }
             }
-            AppIcon(AppSymbol.RIGHT, modifier = Modifier.size(18.dp))
         }
-        HorizontalDivider()
     }
 }
 
 @Composable fun ActivitiesScreen(activities: List<DailyActivity>, busy: Boolean, model: ActivityViewModel) {
+    var exporting by rememberSaveable { mutableStateOf(false) }
+    val app = LocalContext.current.applicationContext as OjtApplication
+    val exportModel: JournalExportViewModel = viewModel(factory = JournalExportViewModel.factory(app.repository, JournalExportService(app, app.journal.photos)))
+    if (exporting) JournalExportDialog(exportModel) { exporting = false }
     val operationError by model.operationError.collectAsStateWithLifecycle()
     val selectedId by model.selectedId.collectAsStateWithLifecycle()
     val editor by model.editor.collectAsStateWithLifecycle()
@@ -83,9 +118,24 @@ import java.time.*
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = AppSpacing.Page, end = AppSpacing.Page,
             top = AppSpacing.Page, bottom = maxOf(104.dp, actionInset)), verticalArrangement = Arrangement.spacedBy(AppSpacing.Related)) {
             item {
-                PageHeader("Activity journal", "Your work, learning and documentation.")
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Activities", style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.semantics { heading() })
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("${activities.size} ${if (activities.size == 1) "entry" else "entries"}",
+                            Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedButton(onClick = { exporting = true; exportModel.preview() }, enabled = !busy && !journalBusy,
+                            modifier = Modifier.heightIn(min = 48.dp)) {
+                            ActionLabel(AppSymbol.EXPORT, "Export Journal", compact = true)
+                        }
+                    }
+                }
             }
-            if (activities.isEmpty()) item { EmptyState("Start your OJT journal", "Use Add activity to document your work, learning and up to five optional photos, including past days.") }
+            if (activities.isEmpty()) item {
+                EmptyState("No activities yet", "Add an entry to start your journal. You can attach up to five photos.")
+            }
             activities.groupBy { it.date }.forEach { (date, rows) ->
                 item(key = "date-$date") { Column(Modifier.padding(top = AppSpacing.Section, bottom = AppSpacing.Related)) { SectionHeading(ActivityRules.dateLabel(date)) } }
                 rows.forEach { activity -> item(key = "activity-${activity.id}") { ActivityListRow(activity, model.photos, { model.detail(activity.id) }) } }
@@ -109,21 +159,38 @@ import java.time.*
                     ActionIconButton(AppSymbol.EDIT, "Edit activity", onClick = { model.edit(selected) }, enabled = !journalBusy)
                     ActionIconButton(AppSymbol.DELETE, "Delete activity", onClick = { deleteRequest = selected }, enabled = !journalBusy, destructive = true)
                 } }
-                item { Text(selected.title, style = MaterialTheme.typography.headlineMedium)
-                    Text(ActivityRules.dateLabel(selected.date) + selected.time?.let { " • ${ActivityRules.timeLabel(it)} PH Time" }.orEmpty(), color = MaterialTheme.colorScheme.onPrimaryContainer) }
+                item {
+                    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(selected.title, style = MaterialTheme.typography.headlineSmall,
+                                modifier = Modifier.semantics { heading() })
+                            Text(ActivityRules.dateLabel(selected.date) + selected.time?.let { " · ${ActivityRules.timeLabel(it)} PH" }.orEmpty(),
+                                style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
                 item { Text(selected.description, style = MaterialTheme.typography.bodyLarge) }
-                item { Text("Documentation • ${selected.photoPaths.size} photos", style = MaterialTheme.typography.titleMedium) }
+                item { Text("Photos · ${selected.photoPaths.size}", style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.semantics { heading() }) }
                 if (selected.photoPaths.isEmpty()) item { Text("No photos attached. Photos are optional.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 selected.photoPaths.forEachIndexed { index, path -> item(key = "photo-$index-$path") {
                     val file = remember(path) { runCatching { model.photos.thumbnailFor(path) }.getOrNull() }
                     Box(Modifier.fillMaxWidth().clickable { viewer = selected.photoPaths to index }) { LocalPhoto(file, "Open activity photo ${index + 1}", Modifier.fillMaxWidth().height(200.dp).clip(MaterialTheme.shapes.medium), maxEdge = 640) }
                     QuietButton(onClick = { viewer = selected.photoPaths to index }) { ActionLabel(AppSymbol.PHOTO, "View photo ${index + 1}", compact = true) }
                 } }
-                item { Section("Share documentation", AppSymbol.SHARE) {
-                    Text("Choose the app and destination yourself. Some apps may omit accompanying text.")
-                    SecondaryButton(onClick = { share(selected, emptyList()) }) { ActionLabel(AppSymbol.SHARE, "Share title & description") }
-                    if (selected.photoPaths.isNotEmpty()) SecondaryButton(onClick = { share(selected, selected.photoPaths) }) { ActionLabel(AppSymbol.SHARE, "Share photos with text", compact = true) }
-                } }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Share", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SecondaryButton(onClick = { share(selected, emptyList()) }) { ActionLabel(AppSymbol.SHARE, "Description") }
+                            if (selected.photoPaths.isNotEmpty()) SecondaryButton(onClick = { share(selected, selected.photoPaths) }) {
+                                ActionLabel(AppSymbol.PHOTO, "Photos + text", compact = true)
+                            }
+                        }
+                    }
+                }
                 item { Text("Created ${selected.createdAt.manilaLabel()}\nUpdated ${selected.updatedAt.manilaLabel()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 if (journalBusy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             }

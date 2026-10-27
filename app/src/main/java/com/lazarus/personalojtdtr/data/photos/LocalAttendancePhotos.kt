@@ -4,6 +4,8 @@ import com.lazarus.personalojtdtr.domain.model.*
 import com.lazarus.personalojtdtr.domain.usecase.ConfirmationFiles
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
 import java.time.LocalDate
 import java.util.UUID
 
@@ -11,6 +13,7 @@ import java.util.UUID
 class LocalAttendancePhotos(
     private val filesDir: File,
     private val render: (File, File, AttendanceEvent) -> Unit,
+    private val syncDirectory: (File) -> Unit = { FileChannel.open(it.toPath(), StandardOpenOption.READ).use { channel -> channel.force(true) } },
 ) : ConfirmationFiles {
     private val drafts = File(filesDir, "attendance-drafts")
     private val photos = File(filesDir, "photos/attendance")
@@ -47,6 +50,14 @@ class LocalAttendancePhotos(
             render(original, stampTemp, event)
             require(stampTemp.isFile && stampTemp.length() > 0) { "Timestamped image generation failed." }
             check(stampTemp.renameTo(stamped)) { "Could not save timestamped image." }
+            // File fsync does not persist rename/mkdir entries. Flush every containing
+            // directory before Room can commit references to this new evidence pair.
+            var parent = directory
+            while (true) {
+                syncDirectory(parent)
+                if (parent == filesDir.canonicalFile) break
+                parent = requireNotNull(parent.parentFile)
+            }
         } catch (error: Throwable) {
             directory.deleteRecursively()
             throw error

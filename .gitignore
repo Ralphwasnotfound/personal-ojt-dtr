@@ -63,6 +63,9 @@ activity-drafts/
 !app/src/**/res/**/*.png
 !app/src/**/res/**/*.webp
 
+# Local user-supplied Figma source contains a personal name and prototype values.
+/design-references/Personal DTR.fig
+
 # Editor, machine, and temporary files
 .agents/
 .codex/

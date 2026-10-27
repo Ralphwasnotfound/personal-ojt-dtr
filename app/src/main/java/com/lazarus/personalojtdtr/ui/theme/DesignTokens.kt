@@ -44,6 +44,12 @@ object AppRefinement {
     val PanelElevation = 1.dp
 }
 
+/** Shared semantic status ink for screens with recorded/completed information. */
+object AppStatusColors {
+    val Success = Color(0xFF2E7D32)
+    val SuccessDark = Color(0xFF81C784)
+}
+
 // The live-camera exception is centralized; review and permission surfaces use app colors.
 internal object CameraPalette {
     val Background = Color.Black
