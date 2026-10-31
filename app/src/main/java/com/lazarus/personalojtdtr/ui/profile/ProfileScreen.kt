@@ -30,8 +30,11 @@ import com.lazarus.personalojtdtr.ui.theme.ThemeSettings
 import java.time.Duration
 import java.time.LocalDate
 import java.util.Locale
+import java.time.DayOfWeek
+import com.lazarus.personalojtdtr.data.preferences.OjtSchedule
 
-@Composable fun ProfileScreen(profile: PersonalProfile, onEditProfile: () -> Unit, onSettings: () -> Unit) {
+@Composable fun ProfileScreen(profile: PersonalProfile, onEditProfile: () -> Unit, onSettings: () -> Unit,
+    avatar: java.io.File? = null) {
     val colors = MaterialTheme.colorScheme
     val displayName = profile.displayName.trim().ifBlank { "Your profile" }
     val initials = profile.displayName.trim().split(Regex("\\s+")).filter(String::isNotBlank)
@@ -45,7 +48,7 @@ import java.util.Locale
             Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Surface(shape = CircleShape, color = colors.primaryContainer) {
-                    Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
+                    ProfileAvatar(avatar, Modifier.size(58.dp)) {
                         Text(initials.uppercase(Locale.ROOT), style = MaterialTheme.typography.titleLarge,
                             color = colors.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
                     }
@@ -78,7 +81,7 @@ import java.util.Locale
         ProfileGroup("Profile", AppSymbol.PROFILE) {
             SettingsActionRow("Edit profile", "Personal and OJT details", AppSymbol.EDIT, onClick = onEditProfile)
             HorizontalDivider(color = colors.outlineVariant)
-            SettingsActionRow("Settings", "Appearance, backup and restore", AppSymbol.SETTINGS,
+            SettingsActionRow("Settings", "OJT configuration and app preferences", AppSymbol.SETTINGS,
                 onClick = onSettings)
         }
 
@@ -96,8 +99,66 @@ import java.util.Locale
     }
 }
 
+@Composable internal fun OjtScheduleEditor(schedule: OjtSchedule, onSave: (Int?, Set<DayOfWeek>) -> Unit,
+    editWeekdays: Boolean, busy: Boolean) {
+    var hours by rememberSaveable(schedule.hoursPerDay) { mutableStateOf(schedule.hoursPerDay?.toString().orEmpty()) }
+    var weekdays by remember(schedule.weekdays) { mutableStateOf(schedule.weekdays) }
+    val parsed = hours.toIntOrNull()
+    ProfileGroup(if (editWeekdays) "Working weekdays" else "Daily forecast pace", if (editWeekdays) AppSymbol.CALENDAR else AppSymbol.ATTENDANCE) {
+        if (editWeekdays) {
+            Text("Selected weekdays are normal workdays. Unselected weekdays are regular days off. Date exceptions remain in your OJT Calendar.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                DayOfWeek.entries.forEach { day ->
+                    FilterChip(selected = day in weekdays, enabled = !busy, onClick = {
+                        weekdays = if (day in weekdays) weekdays - day else weekdays + day
+                    }, label = { Text(day.name.take(3).lowercase().replaceFirstChar { it.uppercase() }) })
+                }
+            }
+        } else {
+            Text("Automatic forecasting uses your credited attendance pace. Optional daily hours override that pace.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(hours, { hours = it }, label = { Text("Manual forecast hours per day · optional") }, enabled = !busy,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
+                modifier = Modifier.fillMaxWidth(), isError = hours.isNotBlank() && (parsed == null || parsed !in 1..24),
+                supportingText = { Text("Leave blank to use your average credited attendance day.") })
+        }
+        Button(onClick = { onSave(if (editWeekdays) schedule.hoursPerDay else parsed, if (editWeekdays) weekdays else schedule.weekdays) },
+            enabled = !busy && (editWeekdays || hours.isBlank() || parsed in 1..24), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+            Text(if (editWeekdays) "Save working weekdays" else "Save forecast pace")
+        }
+    }
+}
+
+/** Photo commands live only inside the editor; the shared avatar itself stays non-interactive. */
+@Composable private fun EditableProfilePhoto(name: String, avatar: java.io.File?, busy: Boolean,
+    onChangePhoto: () -> Unit, onRemovePhoto: () -> Unit) {
+    var removing by remember { mutableStateOf(false) }
+    if (removing) AlertDialog(onDismissRequest = { if (!busy) removing = false },
+        title = { Text("Remove profile photo?") }, text = { Text("Your default avatar will be restored.") },
+        confirmButton = { TextButton(enabled = !busy, onClick = { removing = false; onRemovePhoto() }) { Text("Remove Photo") } },
+        dismissButton = { TextButton(enabled = !busy, onClick = { removing = false }) { Text("Cancel") } })
+    val initials = name.trim().split(Regex("\\s+")).filter(String::isNotBlank).take(2)
+        .mapNotNull { it.firstOrNull()?.uppercaseChar() }.joinToString("").ifBlank { "?" }
+    ProfileGroup("Profile photo", AppSymbol.PROFILE) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            ProfileAvatar(avatar, Modifier.size(72.dp)) {
+                Text(initials, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+            Text("Photo changes are saved only when you confirm.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onChangePhoto, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Change Photo") }
+            TextButton(onClick = { removing = true }, enabled = !busy && avatar != null,
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Remove Photo") }
+        }
+    }
+}
+
 @Composable fun EditProfileScreen(profile: PersonalProfile, busy: Boolean, onSave: (PersonalProfile) -> Unit,
-    onBack: () -> Unit) {
+    onBack: () -> Unit, avatar: java.io.File? = null, onChangePhoto: () -> Unit = {},
+    onRemovePhoto: () -> Unit = {}) {
     var name by rememberSaveable(profile.displayName) { mutableStateOf(profile.displayName) }
     var hours by rememberSaveable(profile.requiredHours) { mutableStateOf(profile.requiredHours.toString()) }
     var breakText by rememberSaveable(profile.defaultBreak) { mutableStateOf(profile.defaultBreak.toMinutes().toString()) }
@@ -108,7 +169,8 @@ import java.util.Locale
     val valid = name.trim().length <= 100 && requiredHours != null && requiredHours in 0..100000 &&
         breakMinutes != null && breakMinutes in 0..1440 && (startText.isBlank() || startDate != null)
 
-    ProfileSubPage("Edit profile", "Student and OJT details", "Back to profile", onBack) {
+    ProfileSubPage("Edit profile", "Student and OJT details", "Back", onBack) {
+        EditableProfilePhoto(profile.displayName, avatar, busy, onChangePhoto, onRemovePhoto)
         ProfileGroup("Student details", AppSymbol.PROFILE) {
             OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Display name") },
                 leadingIcon = { AppIcon(AppSymbol.PROFILE, modifier = Modifier.size(20.dp)) },
@@ -153,16 +215,23 @@ import java.util.Locale
     }
 }
 
-@Composable fun SettingsScreen(onAppearance: () -> Unit, onDataBackup: () -> Unit, onBack: () -> Unit) {
-    ProfileSubPage("Settings", "Personalize and protect your local data", "Back to profile", onBack) {
-        ProfileGroup("Preferences", AppSymbol.SETTINGS) {
-            SettingsActionRow("Appearance", "System default, light or dark", AppSymbol.APPEARANCE,
-                onClick = onAppearance)
-        }
-        ProfileGroup("Storage", AppSymbol.BACKUP) {
-            SettingsActionRow("Data & Backup", "Export or restore your records", AppSymbol.BACKUP,
-                onClick = onDataBackup)
-        }
+@Composable fun SettingsScreen(onAppearance: () -> Unit, onDataBackup: () -> Unit, onBack: () -> Unit,
+    onReminders: () -> Unit = {}, onForecast: () -> Unit = {}, onWorkSchedule: () -> Unit = {}) {
+    ProfileSubPage("Settings", "OJT configuration and app preferences", "Back to profile", onBack) {
+        Text("OJT CONFIGURATION", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        UnifiedSettingsCard("Completion Forecast", "Required hours and completion estimate", AppSymbol.PROGRESS, onForecast)
+        UnifiedSettingsCard("Attendance Reminders", "Morning, afternoon and Get Ready", AppSymbol.BELL, onReminders)
+        UnifiedSettingsCard("Work Schedule", "Working weekdays and calendar dates", AppSymbol.CALENDAR, onWorkSchedule)
+        Text("APP PREFERENCES", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        UnifiedSettingsCard("Appearance", "System, light or dark", AppSymbol.APPEARANCE, onAppearance)
+        UnifiedSettingsCard("Data & Backup", "Export and restore local records", AppSymbol.BACKUP, onDataBackup)
+    }
+}
+
+@Composable private fun UnifiedSettingsCard(title: String, description: String, icon: AppSymbol, onClick: () -> Unit) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Box(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { SettingsActionRow(title, description, icon, onClick = onClick) }
     }
 }
 
@@ -220,7 +289,7 @@ import java.util.Locale
     }
 }
 
-@Composable private fun ProfileSubPage(title: String, subtitle: String, backLabel: String, onBack: () -> Unit,
+@Composable internal fun ProfileSubPage(title: String, subtitle: String, backLabel: String, onBack: () -> Unit,
     content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState())
         .padding(AppSpacing.Page), verticalArrangement = Arrangement.spacedBy(AppSpacing.Section)) {
@@ -237,7 +306,7 @@ import java.util.Locale
     }
 }
 
-@Composable private fun ProfileGroup(title: String, symbol: AppSymbol, content: @Composable ColumnScope.() -> Unit) {
+@Composable internal fun ProfileGroup(title: String, symbol: AppSymbol, content: @Composable ColumnScope.() -> Unit) {
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -1,6 +1,6 @@
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:insetLeft="25%" android:insetTop="25%"
-    android:insetRight="25%" android:insetBottom="25%">
-    <bitmap android:src="@drawable/bsit_logo" android:gravity="fill"
+    android:insetLeft="23.4%" android:insetTop="23.4%"
+    android:insetRight="23.4%" android:insetBottom="23.4%">
+    <bitmap android:src="@drawable/launcher_bsit_logo" android:gravity="fill"
         android:filter="true" android:antialias="true" />
 </inset>

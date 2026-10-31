@@ -29,12 +29,16 @@ import com.lazarus.personalojtdtr.ui.activity.ActivityViewModel
 import com.lazarus.personalojtdtr.ui.history.HistoryScreen
 import com.lazarus.personalojtdtr.ui.profile.*
 import com.lazarus.personalojtdtr.WidgetNavigationRequest
+import com.lazarus.personalojtdtr.domain.model.WidgetInputs
+import com.lazarus.personalojtdtr.domain.model.WidgetSnapshot
+import kotlinx.coroutines.launch
 
 private val destinations = listOf("dashboard" to "Home", "attendance" to "Attendance", "activities" to "Activities", "history" to "History", "profile" to "Profile")
 @Composable fun OjtNavigation(model: OjtViewModel, activitiesModel: ActivityViewModel,
     appearance: com.lazarus.personalojtdtr.ui.theme.ThemeSettings,
     onThemeSelected: (com.lazarus.personalojtdtr.domain.model.ThemeMode) -> Unit,
     widgetNavigation: WidgetNavigationRequest? = null, onWidgetNavigationConsumed: () -> Unit = {}) {
+    val avatar by model.avatar.collectAsStateWithLifecycle()
     val journalMessage by activitiesModel.message.collectAsStateWithLifecycle()
     val journalBusy by activitiesModel.busy.collectAsStateWithLifecycle()
     val restoreRevision by model.restoreRevision.collectAsStateWithLifecycle()
@@ -42,6 +46,10 @@ private val destinations = listOf("dashboard" to "Home", "attendance" to "Attend
     val exportDocument = rememberLauncherForActivityResult(remember { CreateLocalBackup() }) { it?.let(model::exportBackup) }
     val importDocument = rememberLauncherForActivityResult(remember { OpenLocalBackup() }) { it?.let(model::inspectBackup) }
     val context = LocalContext.current
+    val app = context.applicationContext as com.lazarus.personalojtdtr.OjtApplication
+    val schedule by app.repository.schedule.collectAsStateWithLifecycle(initialValue = com.lazarus.personalojtdtr.data.preferences.OjtSchedule())
+    var reminderScope by remember { mutableStateOf(com.lazarus.personalojtdtr.domain.model.WorkdayScope.WHOLE_DAY) }
+    var quickDayOffRequest by remember { mutableStateOf(0L) }
     val capture by model.capture.collectAsStateWithLifecycle()
     val confirmation by model.confirmation.collectAsStateWithLifecycle()
     val state by model.state.collectAsStateWithLifecycle()
@@ -54,6 +62,22 @@ private val destinations = listOf("dashboard" to "Home", "attendance" to "Attend
         if (widgetNavigation != null && state.loaded && state.loadError == null && !busy && !journalBusy) {
             if (widgetNavigation.destination.route == "activities") activitiesModel.detail(null)
             nav.selectTopLevel(widgetNavigation.destination.route)
+            if (widgetNavigation.destination.route == "activities") activitiesModel.edit()
+            if (widgetNavigation.camera && widgetNavigation.destination.route == "attendance") {
+                val date = today()
+                val currentInputs = app.repository.widgetInputs()
+                val action = WidgetSnapshot.safeCameraAction(date, currentInputs)
+                val matchesDate = widgetNavigation.reminderDate == null || widgetNavigation.reminderDate == date.toString()
+                val matchesSession = widgetNavigation.reminderSession == null || (action?.code == widgetNavigation.reminderSession!! * 2 &&
+                    com.lazarus.personalojtdtr.reminders.ReminderRules.eligible(currentInputs, date,
+                        com.lazarus.personalojtdtr.domain.model.OjtSession.entries.first { it.code == widgetNavigation.reminderSession }))
+                if (matchesDate && matchesSession) action?.let { model.openCapture(date, it) }
+            }
+            if (widgetNavigation.destination == com.lazarus.personalojtdtr.domain.model.WidgetDestination.DAY_OFF ||
+                (widgetNavigation.skip && widgetNavigation.reminderDate == today().toString())) {
+                reminderScope = com.lazarus.personalojtdtr.domain.model.WorkdayScope.entries.first { it.code == (widgetNavigation.reminderSession ?: 2) }
+                quickDayOffRequest++
+            }
             onWidgetNavigationConsumed()
         }
     }
@@ -79,24 +103,47 @@ private val destinations = listOf("dashboard" to "Home", "attendance" to "Attend
                         onProfile = { nav.selectTopLevel("profile") },
                         onAttendance = { nav.selectTopLevel("attendance") },
                         onActivities = { activitiesModel.detail(null); nav.selectTopLevel("activities") },
-                        onActivity = { activitiesModel.detail(it); nav.selectTopLevel("activities") }) }
-                    composable("attendance") { AttendanceScreen(state, busy, model.photos, model::openCapture, { model.share(context, it) }, model::timeOut, model::resolve) }
+                        onActivity = { activitiesModel.detail(it); nav.selectTopLevel("activities") }, avatar = avatar) }
+                    composable("attendance") { AttendanceScreen(state, busy, model.photos, model::openCapture,
+                        { model.share(context, it) }, model::timeOut, model::resolve, schedule,
+                        model::setCalendarOverride, model::clearCalendarOverride, quickDayOffRequest, { quickDayOffRequest = 0 }, reminderScope,
+                        onReminderSettings = { nav.navigate("profile/settings/reminders") }) }
                     composable("activities") { ActivitiesScreen(state.activities, busy, activitiesModel) }
                     composable("history") { HistoryScreen(state, model.photos, onAttendance = { nav.selectTopLevel("attendance") }) { model.share(context, it) } }
                     navigation(startDestination = "profile/main", route = "profile") {
                         composable("profile/main") {
                             ProfileScreen(state.profile,
                                 onEditProfile = { nav.navigate("profile/edit") },
-                                onSettings = { nav.navigate("profile/settings") })
+                                onSettings = { nav.navigate("profile/settings") }, avatar = avatar)
                         }
                         composable("profile/edit") {
-                            EditProfileScreen(state.profile, busy, model::saveProfile, onBack = { nav.popBackStack() })
+                            val avatarDraft by model.avatarDraft.collectAsStateWithLifecycle()
+                            val photoPicker = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()) {
+                                uri -> uri?.let(model::selectAvatar)
+                            }
+                            DisposableEffect(model) { onDispose { model.cancelAvatar() } }
+                            avatarDraft?.let { AvatarPreviewDialog(it, busy, model::confirmAvatar, model::cancelAvatar) }
+                            EditProfileScreen(state.profile, busy, model::saveProfile, onBack = { nav.popBackStack() },
+                                avatar = avatar,
+                                onChangePhoto = { photoPicker.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                onRemovePhoto = model::removeAvatar)
                         }
                         composable("profile/settings") {
                             SettingsScreen(onAppearance = { nav.navigate("profile/settings/appearance") },
                                 onDataBackup = { nav.navigate("profile/settings/data-backup") },
+                                onBack = { nav.popBackStack() }, onReminders = { nav.navigate("profile/settings/reminders") },
+                                onForecast = { nav.navigate("profile/settings/forecast") }, onWorkSchedule = { nav.navigate("profile/settings/work-schedule") })
+                        }
+                        composable("profile/settings/forecast") {
+                            ForecastSettingsScreen(state, schedule, busy, model::saveSchedule,
+                                onRequirement = { nav.navigate("profile/edit") }, onSchedule = { nav.navigate("profile/settings/work-schedule") },
                                 onBack = { nav.popBackStack() })
                         }
+                        composable("profile/settings/work-schedule") {
+                            WorkScheduleSettingsScreen(state, schedule, busy, model::saveSchedule,
+                                model::setCalendarOverride, model::clearCalendarOverride, onBack = { nav.popBackStack() })
+                        }
+                        composable("profile/settings/reminders") { com.lazarus.personalojtdtr.reminders.ReminderSettingsScreen { nav.popBackStack() } }
                         composable("profile/settings/appearance") {
                             AppearanceSettingsScreen(appearance, onThemeSelected, onBack = { nav.popBackStack() })
                         }

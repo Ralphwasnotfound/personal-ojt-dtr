@@ -14,6 +14,14 @@ interface OjtDao {
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertResolution(value: SessionResolutionEntity)
     @Query("SELECT * FROM restore_marker WHERE id=1") suspend fun restoreMarker(): RestoreMarkerEntity?
     @Upsert suspend fun saveRestoreMarker(value: RestoreMarkerEntity)
+    @Query("SELECT * FROM ojt_schedule_settings WHERE id=1") suspend fun scheduleSettings(): OjtScheduleSettingsEntity?
+    @Query("SELECT * FROM ojt_schedule_settings WHERE id=1") fun observeScheduleSettings(): Flow<OjtScheduleSettingsEntity?>
+    @Upsert suspend fun saveScheduleSettings(value: OjtScheduleSettingsEntity)
+    @Query("SELECT * FROM calendar_day_overrides ORDER BY date") suspend fun calendarOverrides(): List<CalendarDayOverrideEntity>
+    @Query("SELECT * FROM calendar_day_overrides ORDER BY date") fun observeCalendarOverrides(): Flow<List<CalendarDayOverrideEntity>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveCalendarOverride(value: CalendarDayOverrideEntity)
+    @Query("DELETE FROM calendar_day_overrides WHERE date=:date AND scope=:scope") suspend fun deleteCalendarOverride(date: java.time.LocalDate, scope: Int): Int
+    @Query("DELETE FROM calendar_day_overrides") suspend fun clearCalendarOverrides()
     @Query("SELECT * FROM daily_activities ORDER BY date DESC, coalesce(timeMinutes, -1) DESC, createdAt DESC, id ASC") suspend fun activities(): List<DailyActivityEntity>
     // Called only inside explicit, validated REPLACE restore transactions.
     @Query("DELETE FROM attendance_events") suspend fun clearEvents()

@@ -40,13 +40,17 @@ import com.lazarus.personalojtdtr.R
 import com.lazarus.personalojtdtr.domain.model.WidgetDestination
 import com.lazarus.personalojtdtr.domain.model.WidgetInputs
 import com.lazarus.personalojtdtr.domain.model.WidgetSnapshot
+import com.lazarus.personalojtdtr.domain.usecase.ForecastMethod
+import com.lazarus.personalojtdtr.util.hoursLabel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import java.time.Instant
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 class OjtProgressWidget : GlanceAppWidget() {
-    override val sizeMode = SizeMode.Responsive(setOf(DpSize(250.dp, 148.dp), DpSize(250.dp, 224.dp), DpSize(320.dp, 280.dp)))
+    override val sizeMode = SizeMode.Responsive(setOf(DpSize(250.dp, 148.dp), DpSize(250.dp, 224.dp), DpSize(320.dp, 460.dp)))
     override val stateDefinition = PreferencesGlanceStateDefinition
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -62,7 +66,8 @@ class OjtProgressWidget : GlanceAppWidget() {
         provideContent {
             val inputs by changes.collectAsState(initial)
             val revision = currentState<Preferences>()[WidgetUpdates.revisionKey]
-            val snapshot = remember(inputs, revision) { inputs?.let { WidgetSnapshot.from(it, Instant.now()) } }
+            // Read Manila time on every refresh/recomposition, including delayed midnight work.
+            val snapshot = inputs?.let { WidgetSnapshot.from(it, Instant.now()) }
             WidgetContent(snapshot)
         }
     }
@@ -82,73 +87,114 @@ class OjtWidgetReceiver : GlanceAppWidgetReceiver() {
 @Composable
 private fun WidgetContent(snapshot: WidgetSnapshot?) {
     val size = LocalSize.current
-    val large = size.height >= 224.dp
-    val spacious = size.height >= 280.dp
+    val layout = widgetLayoutSize(size.height.value, size.width.value)
+    val full = layout == WidgetLayoutSize.LARGE
+    val medium = layout != WidgetLayoutSize.COMPACT
     val text = ColorProvider(R.color.widget_text)
     val muted = ColorProvider(R.color.widget_muted)
     Column(GlanceModifier.fillMaxSize().appWidgetBackground()
-        .background(ImageProvider(R.drawable.widget_background))
-        .padding(horizontal = if (large) 16.dp else 12.dp, vertical = if (large) 16.dp else 8.dp)) {
-        Text("My OJT Companion", style = TextStyle(color = muted, fontSize = 12.sp,
-            fontWeight = FontWeight.Medium), maxLines = 1)
-        Spacer(GlanceModifier.height(if (spacious) 12.dp else 8.dp))
-        if (snapshot != null) {
-            val completed = snapshot.completedLabel.compactHours()
-            val required = snapshot.requiredLabel.compactHours()
-            val inlineGoal = completed.length <= 8 && required.length <= 7
-            if (spacious) Text("Completed OJT hours", style = TextStyle(color = muted, fontSize = 11.sp))
-            Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(completed, style = TextStyle(color = text,
-                    fontSize = if (spacious) 36.sp else if (large) 30.sp else 24.sp,
-                    fontWeight = FontWeight.Bold), maxLines = 1)
-                // Long minute-precision values get their goal on a separate line in large
-                // layouts; compact layouts prioritize the completed value over the goal.
-                if (inlineGoal) {
-                    Text(" / $required", style = TextStyle(color = muted,
-                        fontSize = if (large) 16.sp else 12.sp), maxLines = 1)
-                }
+        .background(ImageProvider(R.drawable.widget_background)).padding(if (full) 16.dp else 10.dp)) {
+        Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Image(ImageProvider(R.drawable.widget_ic_activities), "OJT", GlanceModifier.size(if (full) 24.dp else 16.dp))
+            Spacer(GlanceModifier.width(6.dp))
+            Column(GlanceModifier.defaultWeight()) {
+                Text("MY OJT COMPANION", style = TextStyle(color = ColorProvider(R.color.widget_accent),
+                    fontSize = if (full) 12.sp else 10.sp, fontWeight = FontWeight.Bold), maxLines = 1)
+                if (full) Text("OJT Progress", style = TextStyle(color = muted, fontSize = 11.sp))
             }
-            if (large) {
-                val secondary = if (snapshot.summary.required.isZero) snapshot.goalLabel
-                    else "${snapshot.remainingLabel.compactHours()} remaining" + if (inlineGoal) "" else " · Goal $required"
-                Text(secondary, style = TextStyle(color = muted, fontSize = 12.sp), maxLines = 1)
-            }
-            Spacer(GlanceModifier.height(if (spacious) 12.dp else 8.dp))
-            Progress(snapshot)
-            if (large) {
-                Spacer(GlanceModifier.height(if (spacious) 12.dp else 8.dp))
-                Row(GlanceModifier.fillMaxWidth()) {
-                    Text("Today's Attendance", GlanceModifier.defaultWeight(),
-                        style = TextStyle(color = muted, fontSize = 11.sp), maxLines = 1)
-                    Text(snapshot.dateLabel, style = TextStyle(color = muted, fontSize = 11.sp), maxLines = 1)
-                }
-                Text(snapshot.status.label, style = TextStyle(color = text, fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium), maxLines = 1)
-            }
-        } else {
-            Text("Open the app to reload local progress", style = TextStyle(color = text, fontSize = 14.sp), maxLines = 2)
+            if (full && snapshot != null) StatusPill(snapshot.status.label)
         }
+        if (snapshot != null) {
+            Column(GlanceModifier.fillMaxWidth()) {
+            Spacer(GlanceModifier.height(if (full) 16.dp else 4.dp))
+            if (full) Text("Completed time", style = TextStyle(color = muted, fontSize = 12.sp))
+            Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(snapshot.completedLabel, GlanceModifier.defaultWeight(), style = TextStyle(color = text,
+                    fontSize = if (full) 32.sp else 24.sp, fontWeight = FontWeight.Bold), maxLines = 1)
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(String.format(Locale.ENGLISH, "%.1f%%", snapshot.summary.progress * 100),
+                        style = TextStyle(color = ColorProvider(R.color.widget_accent), fontSize = if (full) 22.sp else 13.sp, fontWeight = FontWeight.Bold))
+                    if (full) Text("of ${snapshot.requiredLabel}", style = TextStyle(color = muted, fontSize = 11.sp), maxLines = 1)
+                }
+            }
+            Spacer(GlanceModifier.height(if (full) 8.dp else 2.dp))
+            Progress(snapshot)
+            }
+            if (full) {
+                Column(GlanceModifier.fillMaxWidth()) {
+                Spacer(GlanceModifier.height(16.dp))
+                Row(GlanceModifier.fillMaxWidth()) {
+                    MetricTile("Days recorded", "${snapshot.completedDays} days", GlanceModifier.defaultWeight())
+                    Spacer(GlanceModifier.width(10.dp))
+                    MetricTile("Remaining", snapshot.remainingLabel, GlanceModifier.defaultWeight())
+                }
+                Spacer(GlanceModifier.height(12.dp))
+                Column(GlanceModifier.fillMaxWidth().background(ImageProvider(R.drawable.widget_button)).padding(12.dp)) {
+                    Text("Estimated completion", style = TextStyle(color = muted, fontSize = 11.sp))
+                    Text(forecastLabel(snapshot).removePrefix("Estimated completion · "), style = TextStyle(
+                        color = ColorProvider(R.color.widget_gold), fontSize = 14.sp, fontWeight = FontWeight.Bold), maxLines = 2)
+                    snapshot.forecast.averageDailyCredit?.let { average ->
+                        Text("${average.hoursLabel()} observed/day" + (snapshot.forecast.estimatedRemainingWorkdays?.let { " · $it workdays left" } ?: ""),
+                            style = TextStyle(color = muted, fontSize = 10.sp), maxLines = 2)
+                    }
+                    if (snapshot.forecast.method == ForecastMethod.MANUAL_OVERRIDE)
+                        Text("Manual pace override", style = TextStyle(color = muted, fontSize = 10.sp))
+                }
+                Spacer(GlanceModifier.height(12.dp))
+                Text("Today's Attendance", style = TextStyle(color = text, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+                Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(snapshot.nextActionLabel, GlanceModifier.defaultWeight(), style = TextStyle(color = muted, fontSize = 11.sp), maxLines = 2)
+                    StatusPill(snapshot.status.label)
+                }
+                }
+            } else {
+                Column(GlanceModifier.fillMaxWidth()) {
+                if (medium) {
+                    Spacer(GlanceModifier.height(10.dp))
+                    MetricTile("Remaining", snapshot.remainingLabel, GlanceModifier.fillMaxWidth())
+                    Spacer(GlanceModifier.height(6.dp))
+                }
+                Text(if (snapshot.status == com.lazarus.personalojtdtr.domain.model.WidgetAttendanceStatus.DAY_OFF) "Day Off · No attendance required today" else "Today · ${snapshot.status.label}", style = TextStyle(color = text, fontSize = 10.sp), maxLines = 2)
+                }
+            }
+        } else Text("Open the app to reload progress", style = TextStyle(color = text, fontSize = 12.sp), maxLines = 2)
         Spacer(GlanceModifier.defaultWeight())
         Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            if (!large && snapshot != null) {
-                Column(GlanceModifier.defaultWeight()) {
-                    // Keep the snapshot date visible when Android delays a midnight refresh.
-                    Text("Today · ${snapshot.dateLabel}", style = TextStyle(color = muted, fontSize = 10.sp), maxLines = 1)
-                    Text(snapshot.status.label, style = TextStyle(color = text, fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium), maxLines = 2)
-                }
-            }
-            Shortcut("Attendance", WidgetDestination.ATTENDANCE,
-                if (large || snapshot == null) GlanceModifier.defaultWeight() else GlanceModifier.width(48.dp), large || snapshot == null)
-            if (large || snapshot == null) Spacer(GlanceModifier.width(8.dp))
-            Shortcut("Activities", WidgetDestination.ACTIVITIES,
-                if (large || snapshot == null) GlanceModifier.defaultWeight() else GlanceModifier.width(48.dp), large || snapshot == null)
+            Shortcut("Attendance", WidgetDestination.ATTENDANCE, GlanceModifier.defaultWeight(), true, camera = true)
+            Spacer(GlanceModifier.width(8.dp))
+            Shortcut("Add Activity", WidgetDestination.ACTIVITIES, GlanceModifier.defaultWeight(), true)
+            Spacer(GlanceModifier.width(8.dp))
+            Shortcut("Manage Workday",
+                WidgetDestination.DAY_OFF, GlanceModifier.defaultWeight(), true)
         }
     }
 }
 
-// Presentation only: retain minute precision when nonzero, and avoid redundant "0m".
-private fun String.compactHours(): String = removeSuffix(" 0m")
+@Composable
+private fun MetricTile(label: String, value: String, modifier: GlanceModifier) {
+    Column(modifier.background(ImageProvider(R.drawable.widget_button)).padding(10.dp)) {
+        Text(label, style = TextStyle(color = ColorProvider(R.color.widget_muted), fontSize = 11.sp), maxLines = 1)
+        Text(value, style = TextStyle(color = ColorProvider(R.color.widget_text), fontSize = 17.sp, fontWeight = FontWeight.Bold), maxLines = 1)
+    }
+}
+
+@Composable
+private fun StatusPill(label: String) {
+    Box(GlanceModifier.background(ImageProvider(R.drawable.widget_button)).padding(horizontal = 6.dp, vertical = 4.dp)) {
+        Text(label, style = TextStyle(color = ColorProvider(R.color.widget_accent), fontSize = 10.sp, fontWeight = FontWeight.Medium), maxLines = 1)
+    }
+}
+
+private fun forecastLabel(snapshot: WidgetSnapshot): String = when (snapshot.forecast.method) {
+    ForecastMethod.COMPLETED -> "OJT completed"
+    ForecastMethod.NO_REQUIREMENT -> "Set required hours"
+    ForecastMethod.INSUFFICIENT_HISTORY -> "Collecting attendance data"
+    ForecastMethod.SCHEDULE_REQUIRED -> "Set schedule"
+    ForecastMethod.PROJECTION_LIMIT -> "Estimate unavailable · check schedule"
+    ForecastMethod.AUTOMATIC, ForecastMethod.MANUAL_OVERRIDE -> snapshot.estimatedCompletionDate?.let {
+        "Estimated completion · ${it.format(DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH))}"
+    } ?: "Estimate unavailable · check schedule"
+}
 
 @Composable
 private fun Progress(snapshot: WidgetSnapshot) {
@@ -159,27 +205,29 @@ private fun Progress(snapshot: WidgetSnapshot) {
     Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         // XML drawables provide rounded 4dp progress on API 26+, without animations.
         AndroidRemoteViews(views, GlanceModifier.defaultWeight().height(4.dp))
-        Spacer(GlanceModifier.width(8.dp))
-        Text(snapshot.percentageLabel, style = TextStyle(color = ColorProvider(R.color.widget_muted),
-            fontSize = 11.sp, fontWeight = FontWeight.Medium), maxLines = 1)
     }
 }
 
 @Composable
-private fun Shortcut(label: String, destination: WidgetDestination, modifier: GlanceModifier, showLabel: Boolean) {
+private fun Shortcut(label: String, destination: WidgetDestination, modifier: GlanceModifier, showLabel: Boolean, camera: Boolean = false) {
     val context = LocalContext.current
     val intent = Intent(context, MainActivity::class.java).setAction(destination.action)
         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-    val icon = if (destination == WidgetDestination.ATTENDANCE) R.drawable.widget_ic_attendance else R.drawable.widget_ic_activities
+        .putExtra("widget_camera", camera)
+    val icon = when (destination) {
+        WidgetDestination.ATTENDANCE -> R.drawable.widget_ic_camera
+        WidgetDestination.ACTIVITIES -> R.drawable.widget_ic_activities
+        WidgetDestination.DAY_OFF -> R.drawable.widget_ic_day_off
+    }
     Box(modifier.height(48.dp).background(ImageProvider(R.drawable.widget_button))
         .clickable(actionStartActivity(intent)), contentAlignment = Alignment.Center) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Image(ImageProvider(icon), contentDescription = if (showLabel) null else label,
                 modifier = GlanceModifier.size(16.dp))
             if (showLabel) {
-                Spacer(GlanceModifier.width(8.dp))
+                Spacer(GlanceModifier.height(2.dp))
                 Text(label, style = TextStyle(color = ColorProvider(R.color.widget_text),
-                    fontSize = 12.sp, fontWeight = FontWeight.Medium), maxLines = 1)
+                    fontSize = 11.sp, fontWeight = FontWeight.Medium), maxLines = 2)
             }
         }
     }

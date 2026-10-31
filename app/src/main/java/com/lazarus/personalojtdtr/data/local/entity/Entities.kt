@@ -63,3 +63,20 @@ data class SessionResolutionEntity(@PrimaryKey val id: String, val date: LocalDa
 
 @Entity(tableName = "restore_marker")
 data class RestoreMarkerEntity(@PrimaryKey val id: Int = 1, val generation: String, val appliedAt: Instant)
+
+@Entity(tableName = "ojt_schedule_settings")
+data class OjtScheduleSettingsEntity(
+    @PrimaryKey val id: Int = 1,
+    val expectedHoursPerDay: Int? = null,
+    val workingWeekdaysMask: Int = 0,
+    val legacyPrefsMigrated: Boolean = true,
+)
+
+@Entity(tableName = "calendar_day_overrides", primaryKeys = ["date", "scope"])
+data class CalendarDayOverrideEntity(
+    val date: LocalDate,
+    val kind: Int,
+    val reason: String? = null,
+    val updatedAt: Instant,
+    val scope: Int = 2,
+)

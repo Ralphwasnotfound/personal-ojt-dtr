@@ -52,6 +52,12 @@ exports/
 attendance-photos/
 activity-photos/
 activity-drafts/
+profile-avatar/
+profile-avatar-drafts/
+restore-generations/
+backup-work/
+*.preferences_pb
+*.preferences_pb.*
 *.jpg
 *.jpeg
 *.png

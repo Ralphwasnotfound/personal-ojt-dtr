@@ -35,6 +35,13 @@ class AtomicRestore(private val filesDir: File, private val target: RestoreTarge
                 require(BackupArchive.sha256(File(filesDir, relative)) == asset.sha256) { "Restored photo copy failed integrity verification." }
                 paths[asset.id] = relative
             }
+            // Prepared before the Room generation marker commits, including an explicit
+            // empty avatar for older backups. Never contains an archive-controlled path.
+            val avatarName = stage.records.avatar?.let { id ->
+                val asset = stage.records.assets.single { it.id == id }
+                "$id.${BackupAsset.extension(asset.mediaType)}"
+            }.orEmpty()
+            FileOutputStream(File(directory, ".avatar")).use { it.write(avatarName.toByteArray()); it.fd.sync() }
             FileOutputStream(File(directory, ".ready")).use { it.write("1".toByteArray()); it.fd.sync() }
             syncDirectory(File(directory, "assets")); syncDirectory(directory); syncDirectory(root); syncDirectory(filesDir)
         } catch (error: Throwable) { directory.deleteRecursively(); throw error }

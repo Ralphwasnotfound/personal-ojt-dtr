@@ -101,6 +101,8 @@ class WidgetClockReceiver : BroadcastReceiver() {
         val app = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                androidx.work.WorkManager.getInstance(app).enqueueUniqueWork("attendance-reminder-reconcile-now",
+                    androidx.work.ExistingWorkPolicy.REPLACE, androidx.work.OneTimeWorkRequestBuilder<com.lazarus.personalojtdtr.reminders.ReminderReconcileWorker>().build())
                 WidgetUpdates.scheduleMidnight(app)
                 // Keep the receiver alive until the refresh request is durably enqueued.
                 WidgetUpdates.request(app)?.result?.get(8, TimeUnit.SECONDS)

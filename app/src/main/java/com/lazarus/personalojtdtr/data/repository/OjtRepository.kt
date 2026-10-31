@@ -9,6 +9,7 @@ import com.lazarus.personalojtdtr.data.local.entity.*
 import com.lazarus.personalojtdtr.domain.model.*
 import com.lazarus.personalojtdtr.domain.usecase.AttendanceCalculations
 import com.lazarus.personalojtdtr.domain.usecase.DailyAttendance
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import java.time.Clock
@@ -17,8 +18,24 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import java.time.DayOfWeek
+import com.lazarus.personalojtdtr.data.preferences.OjtSchedule
+import com.lazarus.personalojtdtr.domain.model.CalendarOverrideKind
+import com.lazarus.personalojtdtr.domain.model.CalendarDayOverride
 
-class OjtRepository(private val db: OjtDatabase, private val clock: Clock = Clock.systemUTC()) {
+class OjtRepository(private val db: OjtDatabase, private val clock: Clock = Clock.systemUTC(),
+    val avatarFiles: com.lazarus.personalojtdtr.data.photos.LocalAvatarStore? = null) {
+    private val avatarRevision = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    val avatar = combine(db.invalidationTracker.createFlow("restore_marker"), avatarRevision) { _, _ ->
+        db.withTransaction { avatarFiles?.reference(db.dao().restoreMarker()?.generation)?.let { avatarFiles.resolve(it) } }
+    }.distinctUntilChanged()
+    suspend fun confirmAvatar(source: java.io.File) = exclusive { db.withTransaction {
+        requireNotNull(avatarFiles).confirm(source, dao.restoreMarker()?.generation); avatarRevision.value++
+    } }
+    suspend fun removeAvatar() = exclusive { db.withTransaction {
+        requireNotNull(avatarFiles).remove(dao.restoreMarker()?.generation); avatarRevision.value++
+    } }
+    suspend fun collectAvatar() = exclusive { avatarFiles?.collect(dao.restoreMarker()?.generation); avatarRevision.value++ }
     internal val database get() = db
     private val operationMutex = Mutex()
     suspend fun <T> exclusive(block: suspend () -> T): T = operationMutex.withLock { block() }
@@ -26,7 +43,9 @@ class OjtRepository(private val db: OjtDatabase, private val clock: Clock = Cloc
     // A single transaction prevents mixed pre/post-restore inputs. Invalidation covers every
     // writer, including confirmed photos and REPLACE restore, without UI-specific hooks.
     suspend fun widgetInputs(): WidgetInputs = db.withTransaction {
-        WidgetInputs(dao.profile()?.requiredHours ?: 0, legacySessions(), recordedEvents(), recordedResolutions())
+        val schedule = dao.scheduleSettings()?.toSchedule() ?: OjtSchedule()
+        WidgetInputs(dao.profile()?.requiredHours ?: 0, legacySessions(), recordedEvents(), recordedResolutions(),
+            schedule.hoursPerDay, schedule.weekdays, dao.calendarOverrides().map { it.toModel() })
     }
     suspend fun dtrReport(period: java.time.YearMonth) = db.withTransaction {
         com.lazarus.personalojtdtr.domain.usecase.DtrReports.create(period, dao.profile()?.displayName.orEmpty(),
@@ -40,10 +59,50 @@ class OjtRepository(private val db: OjtDatabase, private val clock: Clock = Cloc
             })
     }
     val widgetChanges get() = db.invalidationTracker.createFlow(
-        "personal_profile", "attendance_sessions", "attendance_events", "session_resolutions", "restore_marker"
+        "personal_profile", "attendance_sessions", "attendance_events", "session_resolutions", "restore_marker",
+        "ojt_schedule_settings", "calendar_day_overrides"
     ).map { widgetInputs() }.distinctUntilChanged()
-    val resolutions = dao.observeResolutions().map { rows -> rows.map { it.toModel() } }
-    suspend fun recordedResolutions() = dao.resolutions().map { it.toModel() }
+    val schedule = dao.observeScheduleSettings().map { it?.toSchedule() ?: OjtSchedule() }.distinctUntilChanged()
+    val calendarOverrides = dao.observeCalendarOverrides().map { rows -> rows.map { it.toModel() } }.distinctUntilChanged()
+    suspend fun saveSchedule(hoursPerDay: Int?, weekdays: Set<DayOfWeek>) = exclusive { db.withTransaction {
+        require(hoursPerDay == null || hoursPerDay in 1..24) { "Expected hours must be between 1 and 24." }
+        dao.saveScheduleSettings(OjtScheduleSettingsEntity(expectedHoursPerDay = hoursPerDay,
+            workingWeekdaysMask = weekdays.fold(0) { mask, day -> mask or (1 shl (day.value - 1)) }, legacyPrefsMigrated = true))
+    } }
+    suspend fun migrateLegacySchedule(schedule: OjtSchedule) = db.withTransaction {
+        val existing = dao.scheduleSettings()
+        if (existing == null || !existing.legacyPrefsMigrated) {
+            dao.saveScheduleSettings(OjtScheduleSettingsEntity(expectedHoursPerDay = schedule.hoursPerDay,
+                workingWeekdaysMask = schedule.weekdays.fold(0) { mask, day -> mask or (1 shl (day.value - 1)) }, legacyPrefsMigrated = true))
+        }
+    }
+    suspend fun setCalendarOverride(date: LocalDate, kind: CalendarOverrideKind, reason: String?, allowAttendanceConflict: Boolean = false, scope: WorkdayScope = WorkdayScope.WHOLE_DAY) = exclusive { db.withTransaction {
+        require(date.year in 1800..2400) { "Date is outside the supported range." }
+        validateWorkdayException(kind, reason)
+        require(scope == WorkdayScope.WHOLE_DAY || kind.nonWorking) { "Special working days apply to the whole day." }
+        val settings = dao.scheduleSettings()?.toSchedule() ?: OjtSchedule()
+        if (scope == WorkdayScope.WHOLE_DAY && kind == CalendarOverrideKind.DAY_OFF && settings.weekdays.isNotEmpty() && date.dayOfWeek !in settings.weekdays && dao.calendarOverrides().none { it.date == date && it.scope == 2 }) return@withTransaction
+        if (scope != WorkdayScope.WHOLE_DAY) require(recordedEvents().none { it.date == date && it.type.code / 2 == scope.code }) {
+            "Attendance exists for this session. Keep its evidence and use attendance recovery instead of adding a skip."
+        }
+        val hasRecords = recordedEvents().any { it.date == date } || recordedResolutions().any { it.date == date } ||
+            legacySessions().any { it.timeIn.atZone(AttendanceCalculations.manila).toLocalDate() == date || it.timeOut?.atZone(AttendanceCalculations.manila)?.toLocalDate() == date }
+        require(!hasRecords || allowAttendanceConflict) { "Attendance already exists on this date. Confirm the schedule override to preserve those records." }
+        // Keep the original skip decision timestamp so edits cannot invalidate event replay.
+        val decidedAt = if (scope == WorkdayScope.WHOLE_DAY) now() else dao.calendarOverrides().firstOrNull { it.date == date && it.scope == scope.code }?.updatedAt ?: now()
+        dao.saveCalendarOverride(CalendarDayOverrideEntity(date, kind.code, reason?.trim()?.takeIf { it.isNotEmpty() }, decidedAt, scope.code))
+    } }
+    suspend fun clearCalendarOverride(date: LocalDate, scope: WorkdayScope = WorkdayScope.WHOLE_DAY) = exclusive { db.withTransaction {
+        // Cancelling a morning exception must not invalidate a saved afternoon-only sequence.
+        if (scope == WorkdayScope.MORNING) require(recordedEvents().none { it.date == date && it.type.code >= 2 } ||
+            recordedEvents().any { it.date == date && it.type == AttendanceEventType.MORNING_TIME_OUT } ||
+            dao.resolutions().any { it.date == date && it.session == 0 }) { "This morning exception supports saved afternoon attendance and must be retained." }
+        dao.deleteCalendarOverride(date, scope.code)
+    } }
+    val resolutions = combine(dao.observeResolutions(), dao.observeEvents(), calendarOverrides) { rows, events, overrides ->
+        effectiveResolutions(events.map { it.toModel() }, rows.map { it.toModel() }, overrides)
+    }
+    suspend fun recordedResolutions() = effectiveResolutions(recordedEvents(), dao.resolutions().map { it.toModel() }, dao.calendarOverrides().map { it.toModel() })
     suspend fun resolve(date: LocalDate, session: OjtSession, kind: ResolutionKind) = exclusive { db.withTransaction {
         val action = SessionResolution(UUID.randomUUID().toString(), date, session, kind, now())
         AttendanceRecovery.validate(action, recordedEvents(), recordedResolutions())
@@ -88,6 +147,11 @@ class OjtRepository(private val db: OjtDatabase, private val clock: Clock = Cloc
 
 
 }
+
+private fun OjtScheduleSettingsEntity.toSchedule() = OjtSchedule(expectedHoursPerDay,
+    DayOfWeek.entries.filter { workingWeekdaysMask and (1 shl (it.value - 1)) != 0 }.toSet())
+private fun CalendarDayOverrideEntity.toModel() = CalendarDayOverride(date,
+    CalendarOverrideKind.entries.single { it.code == kind }, reason, updatedAt, WorkdayScope.entries.single { it.code == scope })
 
 private fun PersonalProfileEntity.toModel() = PersonalProfile(displayName, requiredHours, startDate, Duration.ofSeconds(defaultBreakSeconds))
 private fun AttendanceSessionEntity.toModel() = AttendanceSession(id, timeIn, timeOut, Duration.ofSeconds(breakSeconds), timeInPhotoPath, timeOutPhotoPath)

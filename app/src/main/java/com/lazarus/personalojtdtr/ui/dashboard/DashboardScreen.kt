@@ -40,14 +40,14 @@ private val DashboardPendingDark = Color(0xFFE7C36A)
 
 /** The reference's information order, with theme-aware surfaces and uncluttered data hierarchy. */
 @Composable fun DashboardScreen(state: OjtState, photos: ActivityPhotoStore, onProfile: () -> Unit,
-    onAttendance: () -> Unit, onActivities: () -> Unit, onActivity: (String) -> Unit) {
+    onAttendance: () -> Unit, onActivities: () -> Unit, onActivity: (String) -> Unit, avatar: java.io.File? = null) {
     val summary = AttendanceCalculations.summary(state.sessions, state.profile.requiredHours)
     val date = today()
     val (morning, afternoon) = DailyAttendance.daily(date, state.events, state.resolutions)
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().background(colors.background).verticalScroll(rememberScrollState())
         .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        DashboardHeader(state.profile.displayName, onProfile)
+        DashboardHeader(state.profile.displayName, onProfile, avatar)
         Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = colors.surface,
             border = BorderStroke(0.5.dp, colors.outlineVariant), shadowElevation = 1.dp) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -118,7 +118,7 @@ private val DashboardPendingDark = Color(0xFFE7C36A)
     }
 }
 
-@Composable private fun DashboardHeader(name: String, onProfile: () -> Unit) {
+@Composable private fun DashboardHeader(name: String, onProfile: () -> Unit, avatar: java.io.File?) {
     val colors = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -128,7 +128,7 @@ private val DashboardPendingDark = Color(0xFFE7C36A)
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClickLabel = "Profile", onClick = onProfile)
                     .semantics { contentDescription = "Profile" }.heightIn(min = 52.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(Modifier.size(44.dp).background(colors.primaryContainer, CircleShape), contentAlignment = Alignment.Center) {
+                    com.lazarus.personalojtdtr.ui.profile.ProfileAvatar(avatar, Modifier.size(44.dp)) {
                         DashboardIcon(DashboardGlyph.PROFILE, Modifier.size(22.dp), dashboardAccent())
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

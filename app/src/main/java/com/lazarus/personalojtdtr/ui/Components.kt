@@ -64,12 +64,12 @@ import com.lazarus.personalojtdtr.ui.theme.AppSpacing
     Row(Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .heightIn(min = 72.dp).padding(vertical = AppSpacing.Compact),
         horizontalArrangement = Arrangement.spacedBy(AppSpacing.Page), verticalAlignment = Alignment.CenterVertically) {
-        Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceVariant) {
+        Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.primaryContainer) {
             Icon(symbol.vector, null, Modifier.padding(10.dp).size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.Micro)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         }
         AppIcon(AppSymbol.RIGHT, modifier = Modifier.size(18.dp))
     }

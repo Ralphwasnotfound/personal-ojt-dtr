@@ -20,7 +20,7 @@ class OfflineBackupService(private val context: Context, private val repository:
     private val work get() = File(filesDir, "backup-work").also { check(it.exists() || it.mkdirs()) }
     private val initialization = Mutex()
     private var initialized = false
-    private val store = RoomBackupStore(repository.database)
+    private val store = RoomBackupStore(repository.database, repository.avatarFiles)
     private fun validatePhoto(file: File) {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
@@ -89,6 +89,7 @@ class OfflineBackupService(private val context: Context, private val repository:
             val fd = Os.open(directory.path, OsConstants.O_RDONLY, 0)
             try { Os.fsync(fd) } finally { Os.close(fd) }
         }.apply(stage, ::validatePhoto) }
+        runCatching { repository.collectAvatar() }
         runCatching { stage.discard() } // cleanup failure after commit is not a failed restore
     }
 }

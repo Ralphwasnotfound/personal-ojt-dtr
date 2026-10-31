@@ -2,6 +2,7 @@ package com.lazarus.personalojtdtr.ui.attendance
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -26,8 +27,11 @@ import com.lazarus.personalojtdtr.ui.*
 import com.lazarus.personalojtdtr.ui.theme.DialogSystemBars
 import com.lazarus.personalojtdtr.util.*
 import java.time.LocalDate
+import java.time.DayOfWeek
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.time.ZoneOffset
+import com.lazarus.personalojtdtr.data.preferences.OjtSchedule
 
 private val attendanceClock = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
 private val AttendanceSuccess = Color(0xFF2E7D32)
@@ -37,9 +41,28 @@ private val AttendancePendingDark = Color(0xFFE7C36A)
 
 @Composable fun AttendanceScreen(state: OjtState, busy: Boolean, photos: LocalAttendancePhotos,
     onCapture: (LocalDate, AttendanceEventType) -> Unit, onShare: (AttendanceEvent) -> Unit,
-    onCloseLegacy: (Long) -> Unit, onResolve: (LocalDate, OjtSession, ResolutionKind) -> Unit) {
+    onCloseLegacy: (Long) -> Unit, onResolve: (LocalDate, OjtSession, ResolutionKind) -> Unit,
+    schedule: OjtSchedule, onSetCalendarOverride: (LocalDate, CalendarOverrideKind, String?, Boolean, WorkdayScope) -> Unit,
+    onClearCalendarOverride: (LocalDate, WorkdayScope) -> Unit, quickDayOffRequest: Long = 0, onQuickDayOffConsumed: () -> Unit = {}, initialScope: WorkdayScope = WorkdayScope.WHOLE_DAY, onReminderSettings: () -> Unit = {}) {
     var date by remember { mutableStateOf(today()) }
-    LaunchedEffect(Unit) { while (true) { date = today(); kotlinx.coroutines.delay(1000) } }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    var resumeRevision by remember { mutableStateOf(0L) }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) { date = today(); resumeRevision++ }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(resumeRevision) { while (true) {
+        val now = java.time.Instant.now()
+        date = now.atZone(AttendanceCalculations.manila).toLocalDate()
+        kotlinx.coroutines.delay(java.time.Duration.between(now, WidgetSnapshot.nextMidnight(now)).toMillis().coerceAtLeast(1))
+    } }
+    var manageScope by remember { mutableStateOf(initialScope) }
+    var quickDayOff by remember { mutableStateOf(false) }
+    var calendarRequest by remember { mutableStateOf(0L) }
+    LaunchedEffect(quickDayOffRequest) { if (quickDayOffRequest > 0) { manageScope = initialScope; quickDayOff = true; onQuickDayOffConsumed() } }
     val next = DailyAttendance.next(date, state.events, state.resolutions)
     val earlierOpen = DailyAttendance.sessions(state.events, state.resolutions).any {
         it.timeOut == null && it.timeIn.atZone(AttendanceCalculations.manila).toLocalDate() != date
@@ -50,6 +73,15 @@ private val AttendancePendingDark = Color(0xFFE7C36A)
     val unfinished = AttendanceRecovery.unfinishedBefore(date, state.events, state.resolutions)
     var preview by remember { mutableStateOf<AttendanceEvent?>(null) }
     val todayEvents = state.events.filter { it.date == date }
+    val hasDateRecords = todayEvents.isNotEmpty() || state.resolutions.any { it.date == date } ||
+        state.legacySessions.any { it.timeIn.atZone(AttendanceCalculations.manila).toLocalDate() == date || it.timeOut?.atZone(AttendanceCalculations.manila)?.toLocalDate() == date }
+    val dayStatus = com.lazarus.personalojtdtr.domain.usecase.calendarDayStatus(date, schedule.weekdays, state.calendarOverrides, hasDateRecords)
+    val dayOff = !hasDateRecords && isExplicitDayOff(date, schedule.weekdays, state.calendarOverrides)
+    val exceptionLabel = state.calendarOverrides.wholeDay().firstOrNull { it.date == date }?.kind?.label ?: "Day Off"
+    val unresolvedRecovery = unfinished.isNotEmpty() || earlierOpen || legacy != null
+    val eligibleAction = WidgetSnapshot.safeCameraAction(date, WidgetInputs(
+        legacy = state.legacySessions, events = state.events, resolutions = state.resolutions,
+        workingWeekdays = schedule.weekdays, calendarOverrides = state.calendarOverrides))
     val page = MaterialTheme.colorScheme
 
     Column(Modifier.fillMaxSize().background(page.background).verticalScroll(rememberScrollState())
@@ -60,14 +92,20 @@ private val AttendancePendingDark = Color(0xFFE7C36A)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("$date · Manila time", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
                     color = page.onSurfaceVariant)
-                AttendanceStatus(statusLabel(next, todayEvents.size, earlierOpen, legacy != null, unfinished.isNotEmpty()),
-                    recovery = earlierOpen || legacy != null || unfinished.isNotEmpty())
+                AttendanceStatus(when {
+                    unresolvedRecovery -> statusLabel(next, todayEvents.size, earlierOpen, legacy != null, unfinished.isNotEmpty())
+                    dayOff -> exceptionLabel
+                    dayStatus == OjtCalendarDayStatus.SPECIAL_WORKING_DAY -> "Special Workday"
+                    else -> statusLabel(next, todayEvents.size, earlierOpen, legacy != null, unfinished.isNotEmpty())
+                }, recovery = unresolvedRecovery)
             }
         }
 
         AttendanceSummary(morning.plus(afternoon).hoursLabel(), morning.hoursLabel(), afternoon.hoursLabel())
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (unresolvedRecovery) Text("Recovery Required · resolve the session below to continue", color = page.error,
+                style = MaterialTheme.typography.bodyMedium)
             Text("Today’s events", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold)
             AttendanceEventType.entries.chunked(2).forEach { row ->
@@ -76,19 +114,15 @@ private val AttendancePendingDark = Color(0xFFE7C36A)
                     row.forEach { type ->
                         val event = todayEvents.firstOrNull { it.type == type }
                         val resolution = state.resolutions.firstOrNull { it.date == date && it.session.code == type.code / 2 }
-                        val available = event == null && resolution == null && next == type && !earlierOpen && legacy == null
+                        val available = event == null && resolution == null && eligibleAction == type && !unresolvedRecovery && !dayOff
                         AttendanceEventCard(type, event, resolution, available, Modifier.weight(1f), photos,
-                            onView = { preview = event }, onShare = { event?.let(onShare) })
+                            onView = { preview = event }, onShare = { event?.let(onShare) },
+                            busy = busy, lockedLabel = if (dayOff) exceptionLabel else if (unresolvedRecovery) "Recovery Required" else "Locked",
+                            onCapture = { onCapture(date, type) })
                     }
                 }
             }
-            val canCapture = next != null && legacy == null
-            if (canCapture) {
-                Button(onClick = { onCapture(date, next!!) }, enabled = !busy && !earlierOpen,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) {
-                    ActionLabel(AppSymbol.CAMERA, "Capture ${next!!.label}")
-                }
-            } else if (next == null && todayEvents.size == 4) {
+            if (next == null && todayEvents.size == 4) {
                 Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = RoundedCornerShape(14.dp)) {
                     Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -98,6 +132,14 @@ private val AttendancePendingDark = Color(0xFFE7C36A)
                 }
             }
         }
+
+        WorkdayManagementCard(busy,
+            status = state.calendarOverrides.wholeDay().firstOrNull { it.date == date }?.kind?.label ?: if (dayOff) exceptionLabel else null,
+            notes = state.calendarOverrides.wholeDay().firstOrNull { it.date == date }?.reason, dayOff = dayOff,
+            onToday = { manageScope = WorkdayScope.WHOLE_DAY; quickDayOff = true },
+            onCalendar = { calendarRequest++ })
+        SessionExceptionsCard(date, state, busy, dayOff) { scope -> manageScope = scope; quickDayOff = true }
+        SmartRemindersEntry(busy, onReminderSettings)
 
         unfinished.forEach { start ->
             RecoveryCard(start.date, state.events.filter { it.date == start.date }, photos, busy,
@@ -114,15 +156,14 @@ private val AttendancePendingDark = Color(0xFFE7C36A)
             }
         }
 
-        if (state.resolutions.any { it.date == date } || OjtSession.entries.any { session ->
-                todayEvents.none { it.type.code / 2 == session.code }
-            }) {
-            SessionExceptions(date, todayEvents, state.resolutions, busy) { session ->
-                resolutionRequest = Triple(date, session, ResolutionKind.SKIPPED)
-            }
-        }
+
     }
 
+    OjtCalendarControls(date, state, schedule, busy, onSetCalendarOverride, onClearCalendarOverride, calendarRequest)
+    if (quickDayOff) WorkdayEditor(date, state, schedule, busy, manageScope,
+        onSave = { kind, notes, consent, scope -> onSetCalendarOverride(date, kind, notes, consent, scope); quickDayOff = false },
+        onRemove = { scope -> onClearCalendarOverride(date, scope); quickDayOff = false },
+        onDismiss = { quickDayOff = false }, onCalendar = { quickDayOff = false; calendarRequest++ })
     preview?.let { event -> EventPhotosDialog(event, photos, { onShare(event) }, { preview = null }) }
     resolutionRequest?.let { (day, session, kind) ->
         AlertDialog(onDismissRequest = { resolutionRequest = null },
@@ -135,6 +176,90 @@ private val AttendancePendingDark = Color(0xFFE7C36A)
                 ActionLabel(AppSymbol.CLOSE, "Cancel", compact = true)
             } })
     }
+}
+
+@Composable private fun WorkdayEditor(date: LocalDate, state: OjtState, schedule: OjtSchedule, busy: Boolean, initialScope: WorkdayScope = WorkdayScope.WHOLE_DAY,
+    onSave: (CalendarOverrideKind, String?, Boolean, WorkdayScope) -> Unit, onRemove: (WorkdayScope) -> Unit,
+    onDismiss: () -> Unit, onCalendar: (() -> Unit)? = null) {
+    var scope by remember(date, initialScope) { mutableStateOf(initialScope) }
+    val existing = state.calendarOverrides.firstOrNull { it.date == date && it.scope == scope }
+    var selection by remember(date, existing) { mutableStateOf(existing?.kind) }
+    var notes by remember(date, existing) { mutableStateOf(existing?.reason.orEmpty()) }
+    var consent by remember(date) { mutableStateOf(false) }
+    val conflict = state.events.any { it.date == date } || state.resolutions.any { it.date == date } ||
+        state.legacySessions.any { it.timeIn.atZone(AttendanceCalculations.manila).toLocalDate() == date || it.timeOut?.atZone(AttendanceCalculations.manila)?.toLocalDate() == date }
+    val regularOff = existing == null && schedule.weekdays.isNotEmpty() && date.dayOfWeek !in schedule.weekdays
+    val valid = selection != null && (selection != CalendarOverrideKind.OTHER || notes.isNotBlank()) &&
+        !(regularOff && scope == WorkdayScope.WHOLE_DAY && selection == CalendarOverrideKind.DAY_OFF) && (scope == WorkdayScope.WHOLE_DAY || selection != CalendarOverrideKind.WORKING_DAY)
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Manage Workday") },
+        text = { Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("$date · Asia/Manila")
+            WorkdayScope.entries.forEach { item ->
+                Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { scope = item }, verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = scope == item, onClick = { scope = item }, enabled = !busy)
+                    Text(item.label)
+                }
+            }
+            Text("A skipped half day uses half the forecast daily capacity. Saved attendance is preserved.", style = MaterialTheme.typography.bodySmall)
+            Text(existing?.kind?.label ?: if (conflict) "Attendance Recorded" else if (regularOff) "Regular Day Off" else if (schedule.weekdays.isEmpty()) "Schedule not configured" else if (date < today()) "No Attendance Recorded" else "Scheduled Workday")
+            if (regularOff) Text("A regular rest day already applies. Choose another reason or a special working day to override it.", style = MaterialTheme.typography.bodySmall)
+            (CalendarOverrideKind.entries.filter { it != CalendarOverrideKind.WORKING_DAY } + CalendarOverrideKind.WORKING_DAY).forEach { kind ->
+                Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { selection = kind }, verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = selection == kind, onClick = { selection = kind }, enabled = !busy)
+                    Text(kind.label, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            OutlinedTextField(notes, { notes = it.take(200) }, label = { Text(if (selection == CalendarOverrideKind.OTHER) "Specify reason · required" else "Notes · optional") }, supportingText = { Text("${notes.length}/200") })
+            if (conflict) {
+                Text("Attendance exists. Confirm the calendar exception while preserving all attendance, credited hours, and photo evidence.", color = MaterialTheme.colorScheme.error)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(consent, { consent = it }, enabled = !busy)
+                    Text("I confirm this calendar change", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (existing != null) TextButton(onClick = { onRemove(scope) }, enabled = !busy && (!conflict || consent)) { Text("Remove exception") }
+            onCalendar?.let { TextButton(onClick = it, enabled = !busy) { Text("Open Calendar") } }
+        } },
+        confirmButton = { TextButton(enabled = !busy && valid && (!conflict || consent), onClick = {
+            selection?.let { onSave(it, notes.trim().takeIf(String::isNotEmpty), conflict, scope) }
+        }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+@Composable internal fun OjtCalendarControls(date: LocalDate, state: OjtState, schedule: OjtSchedule, busy: Boolean,
+    onSet: (LocalDate, CalendarOverrideKind, String?, Boolean, WorkdayScope) -> Unit, onClear: (LocalDate, WorkdayScope) -> Unit, openRequest: Long = 0) {
+    var showPicker by remember { mutableStateOf(false) }
+    var showCalendar by remember { mutableStateOf(false) }
+    LaunchedEffect(openRequest) { if (openRequest > 0) showCalendar = true }
+    var editDate by remember { mutableStateOf<LocalDate?>(null) }
+    var editScope by remember { mutableStateOf(WorkdayScope.WHOLE_DAY) }
+    val picker = rememberDatePickerState(initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(), yearRange = 1800..2400)
+    if (showCalendar) AlertDialog(onDismissRequest = { showCalendar = false }, title = { Text("OJT Calendar") },
+        confirmButton = { TextButton(onClick = { showCalendar = false }) { Text("Done") } },
+        text = { Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(if (schedule.weekdays.isEmpty()) "Set working weekdays in Profile > Settings > Work Schedule." else
+            "Regular days off: " + DayOfWeek.entries.filter { it !in schedule.weekdays }.joinToString { it.name.lowercase().replaceFirstChar(Char::uppercase) }.ifEmpty { "None" },
+            style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = { showCalendar = false; showPicker = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Select Date") }
+        state.calendarOverrides.sortedByDescending { it.date }.forEach { entry ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("${entry.date} · ${entry.scope.label} · ${entry.kind.label}", style = MaterialTheme.typography.bodyMedium)
+                    entry.reason?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                }
+                TextButton(onClick = { showCalendar = false; editScope = entry.scope; editDate = entry.date }, enabled = !busy) { Text("Edit") }
+            }
+        }
+    }
+    })
+    if (showPicker) DatePickerDialog(onDismissRequest = { showPicker = false; showCalendar = true },
+        confirmButton = { TextButton(onClick = {
+            picker.selectedDateMillis?.let { editDate = java.time.Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate() }
+            showPicker = false; editScope = WorkdayScope.WHOLE_DAY
+        }) { Text("Continue") } }, dismissButton = { TextButton(onClick = { showPicker = false; showCalendar = true }) { Text("Cancel") } }) { DatePicker(picker) }
+    editDate?.let { day -> WorkdayEditor(day, state, schedule, busy, editScope,
+        onSave = { kind, notes, consent, scope -> onSet(day, kind, notes, consent, scope); editDate = null; showCalendar = true },
+        onRemove = { scope -> onClear(day, scope); editDate = null; showCalendar = true }, onDismiss = { editDate = null; showCalendar = true }) }
 }
 
 @Composable private fun AttendanceSummary(total: String, morning: String, afternoon: String) {
@@ -194,7 +319,8 @@ private fun statusLabel(next: AttendanceEventType?, count: Int, earlierOpen: Boo
 }
 
 @Composable private fun AttendanceEventCard(type: AttendanceEventType, event: AttendanceEvent?, resolution: SessionResolution?,
-    available: Boolean, modifier: Modifier, photos: LocalAttendancePhotos, onView: () -> Unit, onShare: () -> Unit) {
+    available: Boolean, modifier: Modifier, photos: LocalAttendancePhotos, onView: () -> Unit, onShare: () -> Unit,
+    busy: Boolean, lockedLabel: String, onCapture: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val dark = com.lazarus.personalojtdtr.ui.theme.LocalOjtDarkTheme.current
     val recorded = event != null
@@ -204,7 +330,7 @@ private fun statusLabel(next: AttendanceEventType?, count: Int, earlierOpen: Boo
         available -> colors.primary
         else -> if (dark) AttendancePendingDark else AttendancePending
     }
-    Surface(modifier, shape = RoundedCornerShape(16.dp), color = colors.surface,
+    Surface(modifier.clickable(enabled = available && !busy, onClick = onCapture), shape = RoundedCornerShape(16.dp), color = colors.surface,
         border = BorderStroke(0.7.dp, if (available) colors.primary.copy(alpha = .5f) else colors.outlineVariant),
         shadowElevation = if (available) 1.dp else 0.dp) {
         Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -218,11 +344,14 @@ private fun statusLabel(next: AttendanceEventType?, count: Int, earlierOpen: Boo
                 style = MaterialTheme.typography.titleMedium, color = if (recorded) colors.onSurface else colors.onSurfaceVariant,
                 fontWeight = if (recorded) FontWeight.SemiBold else FontWeight.Normal)
             Text(when {
-                event != null -> "Recorded"
+                event != null -> "Completed"
                 resolution != null -> resolution.kind.label
                 available -> "Next event"
-                else -> "Pending"
+                else -> lockedLabel
             }, style = MaterialTheme.typography.labelMedium, color = stateColor)
+            if (available) Button(onClick = onCapture, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                ActionLabel(AppSymbol.CAMERA, "Capture", compact = true)
+            }
             if (event != null) {
                 PhotoEvidence(remember(event.timestampedPhotoPath) {
                     runCatching { photos.resolve(event.timestampedPhotoPath) }.getOrNull()

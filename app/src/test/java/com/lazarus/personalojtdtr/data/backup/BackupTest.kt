@@ -29,9 +29,9 @@ class BackupTest {
     private fun zip(entries: Map<String, ByteArray>): File = temp.newFile().also { file -> ZipOutputStream(file.outputStream()).use { out -> entries.forEach { (name, bytes) -> out.putNextEntry(ZipEntry(name)); out.write(bytes); out.closeEntry() } } }
     private fun stage(archive: File) = BackupArchive.inspect(archive, temp.root, ::validate)
     @Test fun `JSON round trip preserves all supported settings`() { assertEquals(empty(), BackupJson.decode(BackupJson.encode(empty()))) }
-    @Test(expected = IllegalArgumentException::class) fun `unsupported backup version rejected`() { BackupJson.decode(BackupJson.encode(empty()).replace("\"version\":2", "\"version\":999")) }
-    @Test(expected = IllegalArgumentException::class) fun `duplicate JSON keys rejected`() { BackupJson.decode(BackupJson.encode(empty()).replace("\"version\":2", "\"version\":2,\"version\":2")) }
-    @Test(expected = IllegalArgumentException::class) fun `unknown manifest fields rejected`() { BackupJson.decode(BackupJson.encode(empty()).replace("\"version\":2", "\"version\":2,\"surprise\":0")) }
+    @Test(expected = IllegalArgumentException::class) fun `unsupported backup version rejected`() { BackupJson.decode(BackupJson.encode(empty()).replace("\"version\":5", "\"version\":999")) }
+    @Test(expected = IllegalArgumentException::class) fun `duplicate JSON keys rejected`() { BackupJson.decode(BackupJson.encode(empty()).replace("\"version\":5", "\"version\":5,\"version\":5")) }
+    @Test(expected = IllegalArgumentException::class) fun `unknown manifest fields rejected`() { BackupJson.decode(BackupJson.encode(empty()).replace("\"version\":5", "\"version\":5,\"surprise\":0")) }
     @Test fun `complete attendance half day and all photo metadata round trip`() {
         val date = java.time.LocalDate.of(2026, 10, 26)
         fun at(hour: Int) = date.atTime(hour, 0).atZone(java.time.ZoneId.of("Asia/Manila")).toInstant().toEpochMilli()

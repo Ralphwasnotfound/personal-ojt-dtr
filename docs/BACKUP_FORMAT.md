@@ -1,6 +1,6 @@
-# My OJT Companion backup format, version 2 (P3 version 1 readable)
+# OJT Companion backup format, version 5 (versions 1–4 readable)
 
-The P4 backup is a standard single-disk ZIP archive, without ZIP64, executable prefix, directory entries, trailing payloads, or encryption. It contains exactly:
+The backup is a standard single-disk ZIP archive, without ZIP64, executable prefix, directory entries, trailing payloads, or encryption. It contains exactly:
 
 ```text
 manifest.json
@@ -16,8 +16,8 @@ The manifest is strict UTF-8 JSON with these exact top-level keys:
 ```json
 {
   "format": "my-ojt-companion",
-  "version": 2,
-  "schemaVersion": 4,
+  "version": 5,
+  "schemaVersion": 6,
   "applicationId": "com.lazarus.personalojtdtr",
   "records": {
     "createdAt": 1793088000000,
@@ -26,7 +26,10 @@ The manifest is strict UTF-8 JSON with these exact top-level keys:
     "legacy": [],
     "activities": [],
     "resolutions": [],
-    "assets": []
+    "assets": [],
+    "schedule": null,
+    "calendarOverrides": [],
+    "avatar": null
   }
 }
 ```
@@ -50,9 +53,17 @@ Event `type` codes are 0 morning Time In, 1 morning Time Out, 2 afternoon Time I
 
 Asset media types are `image/jpeg`, `image/png`, or `image/webp`; archive extension is derived from the media type. `original` and `stamped` must refer to distinct JPEG assets and cannot reuse another event's assets. An asset's declared byte count, SHA-256, magic signature and actual image decoding are verified. SHA-256 detects accidental damage; it is not authentication or proof that attendance occurred.
 
-## P3 compatibility
+## Profile photo and schedule compatibility (P11.10)
 
-Exports now use format 2 / schema 4 and preserve required activity titles and optional local times. Format 1 / schema 3 is accepted with its original activity fields: titles are derived from descriptions, time remains unset, and photo ordering/timestamps are preserved. Only these explicit format/schema pairs are accepted; fields remain strict for each version. Activity records with more than five or duplicate photo references are rejected rather than silently trimmed. Normal P3 archives from its description-only editor remain compatible.
+Format 5 / Room schema 6 adds `records.avatar`: a separate JPEG asset ID, or explicit `null`. It never contains a gallery URI or filesystem path. The avatar has a 2 MiB cap and must not share an attendance/activity asset. It is included in asset hash, size, signature and decoder validation. Missing/corrupt local avatars are omitted from exports; missing declared archive assets reject restoration before any data replacement.
+
+The profile photo is installed in the immutable restore generation. A synced `.avatar` sidecar is prepared before the existing Room restore marker commits, so the photo follows the same generation switch as restored records. Older backups restore the default avatar. Manual replacement/removal uses an atomic private reference tied to that generation. No Room schema change was added for avatars.
+
+Accepted format/schema pairs are 1/3, 2/4, 3/5, 4/6 and 5/6. Versions 3–5 preserve `schedule` (optional expected hours and working-weekday mask) and `calendarOverrides` (date, reason kind, optional notes and timestamp). Versions 4–5 also preserve exception scope; version 3 defaults to whole day. Versions 1–2 default to an unset schedule with no exceptions. Versions 1–4 have no avatar field and restore the placeholder.
+
+## Historical P3/P4 activity compatibility
+
+Format 2 / schema 4 introduced required activity titles and optional local times. Format 1 / schema 3 is accepted with its original activity fields: titles are derived from descriptions, time remains unset, and photo ordering/timestamps are preserved. Only the explicit format/schema pairs listed above are accepted; fields remain strict for each version. Activity records with more than five or duplicate photo references are rejected rather than silently trimmed. Normal P3 archives from its description-only editor remain compatible.
 
 Activity originals are backed up; derived thumbnails and transient camera/editor drafts are excluded. Operational activity revisions reset to zero during REPLACE; all genuine creation/update timestamps remain intact. User-visible editor/navigation state resets after restoration.
 

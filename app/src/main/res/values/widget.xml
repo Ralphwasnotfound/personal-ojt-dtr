@@ -2,9 +2,11 @@
 <resources>
     <string name="widget_description">Offline OJT progress and attendance shortcuts</string>
     <color name="widget_surface">#F8F6F4</color>
-    <color name="widget_button_surface">#F8F6F4</color>
-    <color name="widget_text">#202020</color>
-    <color name="widget_muted">#757575</color>
+    <color name="widget_button_surface">#F0E7E4</color>
+    <color name="widget_text">#292324</color>
+    <color name="widget_muted">#756D6A</color>
     <color name="widget_accent">#8B1717</color>
+    <color name="widget_deep_maroon">#5A1018</color>
     <color name="widget_track">#E7DEDB</color>
+    <color name="widget_gold">#D4A43A</color>
 </resources>

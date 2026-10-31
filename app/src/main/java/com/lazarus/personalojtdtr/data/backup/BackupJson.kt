@@ -9,7 +9,7 @@ import java.io.StringReader
 object BackupJson {
     private val gson = GsonBuilder().serializeNulls().create()
     fun encode(data: BackupRecords): String = JsonObject().apply {
-        addProperty("format", "my-ojt-companion"); addProperty("version", 2); addProperty("schemaVersion", 4)
+        addProperty("format", "my-ojt-companion"); addProperty("version", 5); addProperty("schemaVersion", 6)
         addProperty("applicationId", "com.lazarus.personalojtdtr"); add("records", gson.toJsonTree(data))
     }.toString()
 
@@ -41,9 +41,11 @@ object BackupJson {
             require(reader.peek() == JsonToken.END_DOCUMENT) { "Extra JSON content." }
             root.fields("format", "version", "schemaVersion", "applicationId", "records")
             val version = root.long("version")
-            require(root.string("format") == "my-ojt-companion" && ((version == 1L && root.long("schemaVersion") == 3L) || (version == 2L && root.long("schemaVersion") == 4L)) && root.string("applicationId") == "com.lazarus.personalojtdtr") { "Unsupported backup format/version." }
+            require(root.string("format") == "my-ojt-companion" && ((version == 1L && root.long("schemaVersion") == 3L) || (version == 2L && root.long("schemaVersion") == 4L) || (version == 3L && root.long("schemaVersion") == 5L) || (version == 4L && root.long("schemaVersion") == 6L) || (version == 5L && root.long("schemaVersion") == 6L)) && root.string("applicationId") == "com.lazarus.personalojtdtr") { "Unsupported backup format/version." }
             val r = root.getAsJsonObject("records")
-            r.fields("createdAt", "profile", "events", "legacy", "activities", "resolutions", "assets")
+            if (version >= 5L) r.fields("createdAt", "profile", "events", "legacy", "activities", "resolutions", "assets", "schedule", "calendarOverrides", "avatar")
+            else if (version >= 3L) r.fields("createdAt", "profile", "events", "legacy", "activities", "resolutions", "assets", "schedule", "calendarOverrides")
+            else r.fields("createdAt", "profile", "events", "legacy", "activities", "resolutions", "assets")
             val profile = if (r["profile"].isJsonNull) null else r.getAsJsonObject("profile").let {
                 it.fields("id", "displayName", "requiredHours", "startDate", "defaultBreakSeconds")
                 BackupProfile(it.int("id"), it.string("displayName"), it.long("requiredHours"), it.optionalLong("startDate"), it.long("defaultBreakSeconds"))
@@ -71,7 +73,15 @@ object BackupJson {
                 it.fields("id", "mediaType", "bytes", "sha256")
                 BackupAsset(it.string("id"), it.string("mediaType"), it.long("bytes"), it.string("sha256"))
             }
-            return BackupRecords(r.long("createdAt"), profile, events, legacy, activities, resolutions, assets)
+            val schedule = if (version < 3L || r["schedule"].isJsonNull) null else r.getAsJsonObject("schedule").let {
+                it.fields("expectedHoursPerDay", "workingWeekdaysMask")
+                BackupSchedule(it.optionalInt("expectedHoursPerDay"), it.int("workingWeekdaysMask"))
+            }
+            val calendar = if (version < 3L) emptyList() else r.rows("calendarOverrides").map {
+                if (version >= 4L) it.fields("date", "kind", "reason", "updatedAt", "scope") else it.fields("date", "kind", "reason", "updatedAt")
+                BackupCalendarOverride(it.long("date"), it.int("kind"), it.optionalString("reason"), it.long("updatedAt"), if (version >= 4L) it.int("scope") else 2)
+            }
+            return BackupRecords(r.long("createdAt"), profile, events, legacy, activities, resolutions, assets, schedule, calendar, if (version >= 5L) r.optionalString("avatar") else null)
         }
     }
     private fun JsonObject.fields(vararg names: String) { require(keySet() == names.toSet()) { "Missing or unknown manifest fields." } }
@@ -80,5 +90,6 @@ object BackupJson {
     private fun JsonObject.int(key: String): Int = long(key).also { require(it in Int.MIN_VALUE..Int.MAX_VALUE) }.toInt()
     private fun JsonObject.optionalLong(key: String): Long? = if (get(key).isJsonNull) null else long(key)
     private fun JsonObject.optionalString(key: String): String? = if (get(key).isJsonNull) null else string(key)
+    private fun JsonObject.optionalInt(key: String): Int? = if (get(key).isJsonNull) null else int(key)
     private fun JsonObject.rows(key: String): List<JsonObject> = getAsJsonArray(key).also { require(it.size() <= 20000) { "Too many records." } }.map { it.asJsonObject }
 }

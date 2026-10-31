@@ -25,15 +25,37 @@ data class OjtState(
     val events: List<AttendanceEvent> = emptyList(),
     val legacySessions: List<AttendanceSession> = emptyList(),
     val resolutions: List<SessionResolution> = emptyList(),
+    val calendarOverrides: List<CalendarDayOverride> = emptyList(),
     val loaded: Boolean = false,
     val loadError: String? = null,
 )
 data class CaptureUi(val draft: CaptureDraft, val working: Boolean = false, val error: String? = null)
 
-class OjtViewModel(private val repository: OjtRepository, private val recorder: AttendanceRecorder, private val backup: OfflineBackupService) : ViewModel() {
+class OjtViewModel(private val repository: OjtRepository, private val recorder: AttendanceRecorder, private val backup: OfflineBackupService, private val avatars: ProfileAvatarManager? = null) : ViewModel() {
+    val avatar = repository.avatar.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    private val _avatarDraft = MutableStateFlow<AvatarDraft?>(null)
+    val avatarDraft = _avatarDraft.asStateFlow()
+    fun selectAvatar(uri: Uri) = perform("Photo ready to preview") {
+        val prepared = requireNotNull(avatars).prepare(uri)
+        _avatarDraft.value?.let { avatars.discard(it) }
+        _avatarDraft.value = prepared
+    }
+    fun cancelAvatar() {
+        if (_busy.value) return
+        _avatarDraft.value?.let { avatars?.discard(it) }; _avatarDraft.value = null
+    }
+    fun confirmAvatar(zoom: Float, x: Float, y: Float) {
+        val draft = _avatarDraft.value ?: return
+        perform("Profile photo updated", { _avatarDraft.value = null }) { requireNotNull(avatars).confirm(draft, zoom, x, y) }
+    }
+    override fun onCleared() {
+        if (!_busy.value) _avatarDraft.value?.let { avatars?.discard(it) }
+        super.onCleared()
+    }
+    fun removeAvatar() = perform("Profile photo removed") { repository.removeAvatar() }
     val state = combine(repository.profile, repository.sessions, repository.activities, repository.events, repository.resolutions) { p, s, a, e, r ->
         OjtState(profile = p, sessions = s + DailyAttendance.sessions(e, r), activities = a, events = e, legacySessions = s, resolutions = r, loaded = true)
-    }.catch { error ->
+    }.combine(repository.calendarOverrides) { state, overrides -> state.copy(calendarOverrides = overrides) }.catch { error ->
         if (error is CancellationException) throw error
         emit(OjtState(loadError = "Local data could not be loaded: ${error.message}"))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), OjtState())
@@ -141,6 +163,14 @@ class OjtViewModel(private val repository: OjtRepository, private val recorder: 
     fun resolve(date: LocalDate, session: OjtSession, kind: ResolutionKind) =
         perform("${session.label}: ${kind.label}") { repository.resolve(date, session, kind) }
 
+    fun setCalendarOverride(date: LocalDate, kind: CalendarOverrideKind, reason: String?, allowConflict: Boolean, scope: WorkdayScope = WorkdayScope.WHOLE_DAY) =
+        perform("${kind.label} saved") {
+            repository.setCalendarOverride(date, kind, reason, allowConflict, scope)
+        }
+    fun clearCalendarOverride(date: LocalDate, scope: WorkdayScope = WorkdayScope.WHOLE_DAY) = perform("Schedule override removed") {
+        repository.clearCalendarOverride(date, scope)
+    }
+
     private val _restoreRevision = MutableStateFlow(0)
     val restoreRevision = _restoreRevision.asStateFlow()
     private val _backupUi = MutableStateFlow(BackupUi())
@@ -193,13 +223,16 @@ class OjtViewModel(private val repository: OjtRepository, private val recorder: 
         }
     }
     fun timeOut(breakMinutes: Long) = perform("Timed out") { repository.timeOut(breakMinutes) }
+    fun saveSchedule(hours: Int?, weekdays: Set<java.time.DayOfWeek>) = perform("OJT schedule saved") {
+        repository.saveSchedule(hours, weekdays)
+    }
     fun saveProfile(profile: PersonalProfile) = perform("Profile saved") { repository.saveProfile(profile) }
     companion object {
-        fun factory(repository: OjtRepository, recorder: AttendanceRecorder, backup: OfflineBackupService): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+        fun factory(repository: OjtRepository, recorder: AttendanceRecorder, backup: OfflineBackupService, avatars: ProfileAvatarManager? = null): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 require(modelClass.isAssignableFrom(OjtViewModel::class.java))
-                return OjtViewModel(repository, recorder, backup) as T
+                return OjtViewModel(repository, recorder, backup, avatars) as T
             }
         }
     }

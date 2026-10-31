@@ -10,6 +10,8 @@ data class BackupEvent(val id: String, val date: Long, val type: Int, val at: Lo
 data class BackupLegacy(val id: String, val timeIn: Long, val timeOut: Long?, val breakSeconds: Long, val original: String?, val outPhoto: String?, val createdAt: Long, val updatedAt: Long)
 data class BackupActivity(val id: String, val date: Long, val description: String, val photos: List<String>, val createdAt: Long, val updatedAt: Long, val title: String = ActivityRules.legacyTitle(description), val timeMinutes: Int? = null)
 data class BackupResolution(val id: String, val date: Long, val session: Int, val kind: Int, val actedAt: Long)
+data class BackupSchedule(val expectedHoursPerDay: Int?, val workingWeekdaysMask: Int)
+data class BackupCalendarOverride(val date: Long, val kind: Int, val reason: String?, val updatedAt: Long, val scope: Int = 2)
 data class BackupAsset(val id: String, val mediaType: String, val bytes: Long, val sha256: String) {
     val entry: String get() = "assets/$id.${extension(mediaType)}"
     companion object {
@@ -17,9 +19,10 @@ data class BackupAsset(val id: String, val mediaType: String, val bytes: Long, v
     }
 }
 data class BackupRecords(val createdAt: Long, val profile: BackupProfile?, val events: List<BackupEvent>,
-    val legacy: List<BackupLegacy>, val activities: List<BackupActivity>, val resolutions: List<BackupResolution>, val assets: List<BackupAsset>) {
+    val legacy: List<BackupLegacy>, val activities: List<BackupActivity>, val resolutions: List<BackupResolution>, val assets: List<BackupAsset>,
+    val schedule: BackupSchedule? = null, val calendarOverrides: List<BackupCalendarOverride> = emptyList(), val avatar: String? = null) {
     fun photoReferences(): List<String> = events.flatMap { listOf(it.original, it.stamped) } +
-        legacy.flatMap { listOfNotNull(it.original, it.outPhoto) } + activities.flatMap { it.photos }
+        legacy.flatMap { listOfNotNull(it.original, it.outPhoto) } + activities.flatMap { it.photos } + listOfNotNull(avatar)
     fun preview() = BackupPreview(createdAt, events.size + legacy.size, activities.size, assets.size, profile?.displayName, profile?.requiredHours ?: 0, resolutions.size)
 }
 data class BackupPreview(val createdAt: Long, val attendanceCount: Int, val activityCount: Int, val photoCount: Int,
@@ -35,11 +38,24 @@ object BackupValidation {
             require(it.id == 1 && it.displayName.length <= 100 && it.requiredHours in 0..100000 && it.defaultBreakSeconds in 0..86400) { "Invalid profile/settings." }
             it.startDate?.let(::date)
         }
+        data.schedule?.let { require((it.expectedHoursPerDay == null || it.expectedHoursPerDay in 1..24) && it.workingWeekdaysMask in 0..127) { "Invalid OJT schedule." } }
+        require(data.calendarOverrides.size <= 20000 && data.calendarOverrides.map { it.date to it.scope }.distinct().size == data.calendarOverrides.size) { "Invalid or duplicate calendar overrides." }
+        data.calendarOverrides.forEach {
+            com.lazarus.personalojtdtr.domain.model.validateWorkdayException(requireNotNull(com.lazarus.personalojtdtr.domain.model.CalendarOverrideKind.entries.firstOrNull { kind -> kind.code == it.kind }), it.reason)
+            require(it.scope in 0..2 && (it.scope == 2 || it.kind != 1))
+            date(it.date); require(it.kind in 0..5 && (it.reason == null || it.reason.length <= 200)) { "Invalid calendar override." }
+            time(it.updatedAt); require(it.updatedAt <= data.createdAt) { "Backup date precedes a calendar override." }
+        }
         ids(data.events.map { it.id }); ids(data.legacy.map { it.id }); ids(data.activities.map { it.id }); ids(data.resolutions.map { it.id })
         require(data.assets.size <= 10000 && data.assets.map { it.id }.distinct().size == data.assets.size) { "Too many or duplicate photo assets." }
         data.assets.forEach {
             require(UUID.fromString(it.id).toString() == it.id && it.bytes in 1..BackupArchive.MAX_PHOTO_BYTES && it.sha256.matches(Regex("[0-9a-f]{64}"))) { "Invalid photo asset metadata." }
             BackupAsset.extension(it.mediaType)
+        }
+        data.avatar?.let { id ->
+            val asset = data.assets.singleOrNull { it.id == id }
+            require(asset != null && asset.mediaType == "image/jpeg" && asset.bytes <= 2L * 1024 * 1024) { "Invalid profile photo asset." }
+            require(data.copy(avatar = null).photoReferences().none { it == id }) { "A profile photo must use its own asset." }
         }
         val refs = data.photoReferences()
         require(refs.toSet() == data.assets.map { it.id }.toSet()) { "Missing or unreferenced photo assets." }
@@ -71,7 +87,7 @@ object BackupValidation {
         val history = (events.map { Triple(it.occurredAt, it, null as SessionResolution?) } + actions.map { Triple(it.actedAt, null as AttendanceEvent?, it) }).sortedBy { it.first }
         val replayEvents = mutableListOf<AttendanceEvent>(); val replayActions = mutableListOf<SessionResolution>()
         for ((_, event, action) in history) {
-            if (event != null) { DailyAttendance.validate(event, replayEvents, legacy, replayActions); replayEvents += event }
+            if (event != null) { DailyAttendance.validate(event, replayEvents, legacy, effectiveResolutions(replayEvents, replayActions, data.calendarOverrides.filter { it.updatedAt < event.occurredAt.toEpochMilli() }.map { CalendarDayOverride(date(it.date), CalendarOverrideKind.entries.single { k -> k.code == it.kind }, it.reason, time(it.updatedAt), WorkdayScope.entries.single { scope -> scope.code == it.scope }) })); replayEvents += event }
             if (action != null) { AttendanceRecovery.validate(action, replayEvents, replayActions); replayActions += action }
         }
         require(history.all { it.first <= Instant.ofEpochMilli(data.createdAt) }) { "Backup date precedes its attendance history." }

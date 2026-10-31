@@ -6,6 +6,7 @@ import org.junit.Test
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.DayOfWeek
 
 class WidgetSnapshotTest {
     private val day = LocalDate.parse("2026-10-25")
@@ -149,5 +150,74 @@ class WidgetSnapshotTest {
         assertEquals("0h 0m", restored.completedLabel)
         assertEquals("10h 0m", restored.remainingLabel)
         assertEquals(WidgetAttendanceStatus.NOT_STARTED, restored.status)
+    }
+
+    @Test fun `completed day count includes only credited working dates`() {
+        val one = events(4)
+        val two = events(2, day.minusDays(1))
+        val state = snapshot(WidgetInputs(legacy = emptyList(), events = one + two))
+        assertEquals(2, state.completedDays)
+    }
+
+    @Test fun `estimate skips nonworking dates and rounds partial day up`() {
+        val friday = LocalDate.parse("2026-10-30")
+        val estimate = WidgetSnapshot.estimate(friday, Duration.ofHours(9), 8,
+            setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY))
+        assertEquals(LocalDate.parse("2026-11-03"), estimate)
+    }
+
+    @Test fun `estimate remains unset until schedule is configured and marks completed`() {
+        assertNull(WidgetSnapshot.estimate(day, Duration.ofHours(1), null, emptySet()))
+        assertEquals(day, WidgetSnapshot.estimate(day, Duration.ZERO, null, emptySet()))
+        assertFalse(snapshot().isOjtCompleted)
+        assertTrue(snapshot(WidgetInputs(1, events = events(4))).isOjtCompleted)
+    }
+
+    @Test fun `snapshot estimates only from configured weekdays and hours`() {
+        val configured = WidgetSnapshot.from(WidgetInputs(requiredHours = 12, expectedHoursPerDay = 8,
+            workingWeekdays = setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
+                DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)), now)
+        assertEquals(LocalDate.parse("2026-10-27"), configured.estimatedCompletionDate)
+        assertNull(snapshot(WidgetInputs(requiredHours = 12)).estimatedCompletionDate)
+    }
+
+    @Test fun `camera shortcut action follows next attendance event and completed day falls back`() {
+        assertEquals(AttendanceEventType.MORNING_TIME_IN,
+            WidgetSnapshot.safeCameraAction(day, WidgetInputs()))
+        assertEquals(AttendanceEventType.AFTERNOON_TIME_OUT,
+            WidgetSnapshot.safeCameraAction(day, WidgetInputs(events = events(3))))
+        assertNull(WidgetSnapshot.safeCameraAction(day, WidgetInputs(events = events(4))))
+    }
+
+    @Test fun `camera shortcut falls back for recovery or ambiguous records`() {
+        val previousOpen = events(1, day.minusDays(1))
+        assertNull(WidgetSnapshot.safeCameraAction(day, WidgetInputs(events = previousOpen)))
+        val duplicate = events(1) + events(1).map { it.copy(id = "duplicate") }
+        assertNull(WidgetSnapshot.safeCameraAction(day, WidgetInputs(events = duplicate)))
+    }
+
+    @Test fun `day off is shown without attendance and camera shortcut opens attendance fallback`() {
+        val off = CalendarDayOverride(day, CalendarOverrideKind.DAY_OFF, "Holiday")
+        val input = WidgetInputs(requiredHours = 40, workingWeekdays = setOf(day.dayOfWeek), calendarOverrides = listOf(off))
+        val state = snapshot(input)
+        assertEquals(WidgetAttendanceStatus.DAY_OFF, state.status)
+        assertEquals("No attendance required today", state.nextActionLabel)
+        assertEquals(0, state.completedDays)
+        assertNull(WidgetSnapshot.safeCameraAction(day, input))
+        assertEquals(WidgetAttendanceStatus.COMPLETED,
+            snapshot(input.copy(events = events(4))).status)
+    }
+
+    @Test fun `day off shortcut resolves separately to attendance and reflects Manila rollover`() {
+        assertEquals(WidgetDestination.DAY_OFF, WidgetDestination.fromAction("com.lazarus.personalojtdtr.widget.OPEN_DAY_OFF"))
+        assertEquals("attendance", WidgetDestination.DAY_OFF.route)
+        val input = WidgetInputs(calendarOverrides = listOf(CalendarDayOverride(day.plusDays(1), CalendarOverrideKind.DAY_OFF)))
+        val before = WidgetSnapshot.from(input, Instant.parse("2026-10-25T15:59:59Z"))
+        val after = WidgetSnapshot.from(input, Instant.parse("2026-10-25T16:00:00Z"))
+        assertEquals(day, before.date)
+        assertEquals(day.plusDays(1), after.date)
+        assertEquals(WidgetAttendanceStatus.DAY_OFF, after.status)
+        assertEquals("No attendance required today", after.nextActionLabel)
+        assertNull(WidgetSnapshot.safeCameraAction(after.date, input))
     }
 }

@@ -28,7 +28,7 @@ class AttendanceScreenVisualTest : InstrumentationTestCase() {
     override fun setUp() {
         super.setUp()
         activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
     }
 
     override fun tearDown() {
@@ -37,7 +37,12 @@ class AttendanceScreenVisualTest : InstrumentationTestCase() {
     }
 
     private fun render(state: OjtState = OjtState(loaded = true), mode: ThemeMode = ThemeMode.LIGHT,
-        onCapture: (LocalDate, AttendanceEventType) -> Unit = { _, _ -> }) {
+        onCapture: (LocalDate, AttendanceEventType) -> Unit = { _, _ -> },
+        onSave: (LocalDate, CalendarOverrideKind, String?, Boolean, WorkdayScope) -> Unit = { _, _, _, _, _ -> },
+        onClear: (LocalDate, WorkdayScope) -> Unit = { _, _ -> }, onReminders: () -> Unit = {}) {
+        // Let the real activity finish its initial theme/content frame before replacing it.
+        instrumentation.waitForIdleSync()
+        instrumentation.uiAutomation.waitForIdle(300, 5000)
         instrumentation.runOnMainSync {
             val photos = (activity.application as OjtApplication).recorder.photos
             activity.setContent {
@@ -47,7 +52,8 @@ class AttendanceScreenVisualTest : InstrumentationTestCase() {
                             { it == "attendance" }, true, {})
                     }) { padding ->
                         Box(Modifier.fillMaxSize().padding(padding)) {
-                            AttendanceScreen(state, false, photos, onCapture, {}, {}, { _, _, _ -> })
+                            AttendanceScreen(state, false, photos, onCapture, {}, {}, { _, _, _ -> },
+                                com.lazarus.personalojtdtr.data.preferences.OjtSchedule(), onSave, onClear, onReminderSettings = onReminders)
                         }
                     }
                 }
@@ -106,7 +112,7 @@ class AttendanceScreenVisualTest : InstrumentationTestCase() {
         await("Attendance")
         await("Not started")
         screenshot("attendance-v2-light.png")
-        val action = await("Capture Morning Time In")
+        val action = await("Capture")
         var clickable = action
         while (!clickable.isClickable && clickable.parent != null) clickable = clickable.parent
         assertTrue("Capture action has a touch target", clickable.isClickable)
@@ -142,9 +148,70 @@ class AttendanceScreenVisualTest : InstrumentationTestCase() {
             AttendanceEventType.MORNING_TIME_IN, start, start, "missing-recovery.jpg", "missing-recovery.jpg")), loaded = true)
         render(state, ThemeMode.DARK)
         await("Recovery")
+        scrollTo("Recovery · $previousDay")
         await("Recovery · $previousDay")
         await("An earlier session has no Time Out")
         await("Mark incomplete / unverified")
         screenshot("attendance-v2-dark-recovery.png")
+    }
+
+    private fun click(text: String) {
+        scrollTo(text)
+        var node = await(text)
+        while (!node.isClickable && node.parent != null) node = node.parent
+        assertTrue("Clickable action: $text", node.isClickable)
+        assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        instrumentation.waitForIdleSync()
+    }
+
+    fun testManagementNavigationRequiresConfirmationAndUsesExistingCalendar() {
+        var saves = 0
+        var reminders = 0
+        render(onSave = { _, _, _, _, _ -> saves++ }, onReminders = { reminders++ })
+        scrollTo("Smart Reminders")
+        await("Workday Management"); await("Session Exceptions")
+        screenshot("p118-management-light.png")
+        click("Manage Today")
+        await("Manage Workday"); await("Whole day")
+        click("Cancel")
+        click("Morning Skip")
+        await("Morning only"); screenshot("p118-morning-skip.png")
+        click("Cancel")
+        click("Afternoon Skip")
+        await("Afternoon only"); screenshot("p118-afternoon-skip.png")
+        click("Cancel")
+        click("OJT Calendar")
+        await("Select Date"); click("Select Date")
+        await("Continue"); click("Cancel"); click("Done")
+        click("Smart Reminders")
+        assertEquals(1, reminders)
+        assertEquals("Opening management actions never saves", 0, saves)
+    }
+
+    fun testDarkManagementCardsAndExistingSessionReason() {
+        val day = today()
+        val state = OjtState(loaded = true, calendarOverrides = listOf(CalendarDayOverride(day,
+            CalendarOverrideKind.SICK_LEAVE, "Isolated morning leave", scope = WorkdayScope.MORNING)),
+            resolutions = listOf(SessionResolution("isolated-skip", day, OjtSession.MORNING, ResolutionKind.SKIPPED, java.time.Instant.now())))
+        var removed: Pair<LocalDate, WorkdayScope>? = null
+        render(state, ThemeMode.DARK, onClear = { date, scope -> removed = date to scope })
+        scrollTo("Workday Management")
+        screenshot("p118-workday-dark.png")
+        scrollTo("Morning: Sick Leave")
+        await("Morning: Sick Leave"); await("Edit Morning"); await("Afternoon Skip")
+        screenshot("p118-management-dark.png")
+        click("Edit Morning")
+        scrollTo("I confirm this calendar change")
+        fun checkbox(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            node ?: return null
+            if (node.isCheckable && node.className?.toString()?.contains("CheckBox") == true) return node
+            for (index in 0 until node.childCount) checkbox(node.getChild(index))?.let { return it }
+            return null
+        }
+        val consent = requireNotNull(checkbox(instrumentation.uiAutomation.rootInActiveWindow))
+        assertTrue(consent.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        instrumentation.waitForIdleSync()
+        click("Remove exception")
+        assertEquals(day to WorkdayScope.MORNING, removed)
     }
 }
